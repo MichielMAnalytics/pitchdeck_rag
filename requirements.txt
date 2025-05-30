@@ -1,0 +1,9 @@
+# requirements.txt
+streamlit
+PyMuPDF==1.23.25 # fitz is part of PyMuPDF
+Pillow
+llama-index-core
+llama-index-multi-modal-llms-openai
+llama-index-llms-openai
+llama-index-embeddings-openai
+openai # The base OpenAI library
