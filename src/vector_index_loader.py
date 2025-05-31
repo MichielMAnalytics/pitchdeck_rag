@@ -10,17 +10,14 @@ def load_existing_index(persistent_dir: str, openai_api_key: str, memory: ChatMe
     Returns the loaded index and a chat engine built from it, or None if loading fails.
     """
     os.environ["OPENAI_API_KEY"] = openai_api_key # Ensure API key is set
-
     if not os.path.exists(persistent_dir) or not os.path.isdir(persistent_dir) or not os.listdir(persistent_dir):
         print(f"Warning: No existing index found at '{persistent_dir}'. Returning None.")
         return None, None
-
     try:
         print(f"Loading VectorStoreIndex from {persistent_dir}...")
         vec_storage_context = StorageContext.from_defaults(persist_dir=persistent_dir)
         vector_index = load_index_from_storage(vec_storage_context)
         print("VectorStoreIndex loaded successfully.")
-
         chat_engine = vector_index.as_chat_engine(
             chat_mode="context",
             memory=memory,
@@ -39,22 +36,20 @@ if __name__ == "__main__":
     # IMPORTANT: Replace with your actual OpenAI API key for testing
     # Or ensure it's set as an environment variable
     TEST_API_KEY = os.environ.get("OPENAI_API_KEY")
-
     if not TEST_API_KEY:
         print("OPENAI_API_KEY environment variable not set. Cannot run index loader example.")
         print("Please set it or replace TEST_API_KEY with your key for testing.")
     else:
         # This path should match where your vector_index_builder.py saved the index
-        index_persist_dir = "./data/VectorStoreIndex/RAG" # Using the simplified "RAG" folder name
-
+        index_persist_dir = "./data/VectorStoreIndex/Rag" # Updated path
         # Dummy memory and prompt for testing loader
         dummy_memory = ChatMemoryBuffer.from_defaults(token_limit=1000)
         dummy_system_prompt = "You are a test assistant."
-
+        
         loaded_idx, loaded_engine = load_existing_index(
             index_persist_dir, TEST_API_KEY, dummy_memory, dummy_system_prompt, "gpt-4o"
         )
-
+        
         if loaded_idx and loaded_engine:
             print("\nSuccessfully loaded index and created chat engine.")
             # You can now test the engine, e.g.,

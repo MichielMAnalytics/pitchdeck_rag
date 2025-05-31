@@ -1,9 +1,9 @@
 # src/slide_description_gen.py
 import os
-# from llama_index.core import SimpleDirectoryReader, Document # REMOVED SimpleDirectoryReader import here
-from llama_index.core import Document # Keep Document for text output
-from llama_index.core.schema import ImageDocument # ADD THIS IMPORTANT IMPORT
+# from llama_index.core import SimpleDirectoryReader, Document # Remove SimpleDirectoryReader if it's not used otherwise
 from llama_index.multi_modal_llms.openai import OpenAIMultiModal
+from llama_index.core import Document # Document is still in core
+from llama_index.core.schema import ImageDocument # <--- CORRECTED: Import ImageDocument from schema
 
 def describe_image(image_path: str, openai_mm_llm: OpenAIMultiModal) -> str:
     """
@@ -11,21 +11,15 @@ def describe_image(image_path: str, openai_mm_llm: OpenAIMultiModal) -> str:
     """
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image file not found: {image_path}")
-
-    # --- KEY CHANGE HERE ---
-    # Explicitly create an ImageDocument from the image path
-    image_document = ImageDocument(image_path=image_path)
-    # The multimodal LLM expects a list of image documents
-    image_documents_list = [image_document]
-    # --- END KEY CHANGE ---
-
+    # Load image document correctly for multimodal LLM
+    # Pass the image path directly to ImageDocument
+    image_documents = [ImageDocument(image_path=image_path)] # <--- THIS LINE IS CORRECTED
     # Define the query
     query = "This image is part of a slidedeck, describe the relevant content for analysis of the presentation. Please respond in full sentences and without empty lines."
-
     # Get the response
     response = openai_mm_llm.complete(
         prompt=query,
-        image_documents=image_documents_list, # Pass the list of ImageDocument(s)
+        image_documents=image_documents,
     )
     return response.text
 
@@ -39,42 +33,37 @@ def describe_slides_in_folder(image_directory: str, openai_api_key: str) -> list
         model="gpt-4o",
         api_key=openai_api_key
     )
-
     if not os.path.isdir(image_directory):
         print(f"Error: Directory '{image_directory}' does not exist.")
         return []
-
     image_files = sorted([
         os.path.join(image_directory, f)
         for f in os.listdir(image_directory)
         if f.endswith(".png")
     ])
-
     documents = []
     print(f"Found {len(image_files)} images in {image_directory} for description.")
-
     for image_file in image_files:
         try:
             print(f"Processing image: {image_file}")
+            # The describe_image function already uses ImageDocument internally now
             description = describe_image(image_file, openai_mm_llm)
             print(f"Response: {description[:100]}...") # Print first 100 chars
             print("---------------------------------")
-
             # Extract startup name from filename (assuming format like startup_name_slide_XX.png)
             # Adjust this if your naming convention is different
             try:
                 base_filename = os.path.basename(image_file)
                 startup_name = base_filename.split('_slide_')[0].replace("_", " ").title()
                 page_number = int(base_filename.split('_slide_')[-1].replace('.png', ''))
+            
             except Exception:
                 startup_name = "Unknown Startup"
                 page_number = -1 # Indicate unknown page
-
-            # IMPORTANT: The Document object we create here is for the *textual description*
-            # to be added to the vector index, not for the image itself.
             document = Document(
                 text=description,
                 doc_id=os.path.basename(image_file),
+            
                 metadata={"startup_name": startup_name, "page_number": page_number, "source_image": image_file}
             )
             documents.append(document)
@@ -87,6 +76,7 @@ def describe_slides_in_folder(image_directory: str, openai_api_key: str) -> list
                     text=f"Error processing image {os.path.basename(image_file)}: {e}",
                     doc_id=os.path.basename(image_file),
                     metadata={"error": True, "source_image": image_file}
+               
                 )
             )
     return documents
@@ -96,14 +86,13 @@ if __name__ == "__main__":
     # IMPORTANT: Replace with your actual OpenAI API key for testing
     # Or ensure it's set as an environment variable
     TEST_API_KEY = os.environ.get("OPENAI_API_KEY")
-
     if not TEST_API_KEY:
         print("OPENAI_API_KEY environment variable not set. Cannot run description generation example.")
         print("Please set it or replace TEST_API_KEY with your key for testing.")
     else:
         # Assuming you have some dummy images in a folder
-        # Make sure 'data/slides_output/' exists and has some .png files
-        dummy_image_dir = './data/slides_output/'
+        # Make sure 'data/slides/' exists and has some .png files
+        dummy_image_dir = './data/slides/dummy_startup_slides/' # Updated path to a specific subfolder for consistency
         if not os.path.isdir(dummy_image_dir) or not any(f.endswith('.png') for f in os.listdir(dummy_image_dir)):
             print(f"No PNG images found in '{dummy_image_dir}'. Please ensure images are present for testing.")
             print("Run pitchdeck_splitter.py first to generate some dummy images.")

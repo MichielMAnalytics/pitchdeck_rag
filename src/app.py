@@ -1,266 +1,338 @@
 # src/app.py
 import streamlit as st
 import os
-import tempfile
-import json
-from datetime import datetime
-from llama_index.core import StorageContext, load_index_from_storage, VectorStoreIndex, Document
+import openai
+import fitz  # PyMuPDF for PDF processing
+from llama_index.core import StorageContext, load_index_from_storage, SimpleDirectoryReader, Document, VectorStoreIndex
 from llama_index.llms.openai import OpenAI as LI_OpenAI
 from llama_index.core.memory import ChatMemoryBuffer
-import time
+from llama_index.multi_modal_llms.openai import OpenAIMultiModal
+import tempfile
+import json
+import re
+import sys
 
-# Import local modules
 from pitchdeck_splitter import pdf_to_images
-from slide_description_gen import describe_slides_in_folder
+from slide_description_gen import describe_image
+from pitchdeck_evaluator import evaluate_startup
 
-# --- Configuration ---
-PERSIST_DIR = "./data/VectorStoreIndex/RAG"
-PITCHDECKS_DIR = "./data/pitchdecks"
-SLIDES_OUTPUT_DIR = "./data/slides_output"
+# Add the parent directory to the system path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-# Ensure directories exist
-os.makedirs(PERSIST_DIR, exist_ok=True)
-os.makedirs(PITCHDECKS_DIR, exist_ok=True)
-os.makedirs(SLIDES_OUTPUT_DIR, exist_ok=True)
-
-# --- Streamlit Page Configuration ---
-st.set_page_config(layout="wide", page_title="VC Pitch Deck Analyzer & RAG Chat")
-
-# --- Helper Functions ---
-@st.cache_resource(show_spinner=False)
-def get_openai_api_key():
-    """Retrieves the OpenAI API key from Streamlit secrets."""
-    api_key = st.secrets.get("OPENAI_API_KEY")
-    if not api_key:
-        st.error("OpenAI API Key not found. Please add it to your `.streamlit/secrets.toml` file.")
+# --- API Key Handling (Recommended: Use Streamlit secrets) ---
+try:
+    OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+except KeyError:
+    st.warning("OPENAI_API_KEY not found in Streamlit secrets. Attempting to use environment variable.")
+    OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+    if not OPENAI_API_KEY:
+        st.error("OPENAI_API_KEY not found. Please set it in Streamlit secrets or as an environment variable.")
         st.stop()
-    return api_key
+os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
+openai.api_key = OPENAI_API_KEY
 
-@st.cache_resource(show_spinner=False)
-def initialize_rag_components(api_key: str):
-    """
-    Initializes the RAG vector index and chat engine.
-    Loads existing index if available, otherwise creates an empty one.
-    """
-    os.environ["OPENAI_API_KEY"] = api_key
+# --- Streamlit Config ---
+st.set_page_config(page_title="RAG Chat for VC Pitch decks", page_icon=" 💼 ", layout="wide")
+st.title(" 💼  RAG Chat & Evaluation for VC Pitch decks")
 
-    system_prompt_chat = (
-        "You are an AI assistant specialized in venture capital and startup evaluation. "
-        "You will answer questions based on the provided context from pitch deck slides "
-        "and your general knowledge. If the context does not contain the answer, "
-        "state that you don't have enough information from the provided documents. "
-        "Be concise and professional. Do not hallucinate."
-    )
+# --- Constants ---
+MODEL_NAME = "gpt-4o"
+SYSTEM_PROMPT_CHAT = (
+    "You are a helpful assistant for the investment team of a venture capital fund called UVC Partners. "
+    "Answer with the most amount of information you can find in the provided context."
+)
 
-    llm = LI_OpenAI(temperature=0, model="gpt-4o", api_key=api_key)
-    memory = ChatMemoryBuffer.from_defaults(token_limit=1000)
+# --- Define Persistent Directories ---
+PITCHDECKS_DIR = "./data/pitchdecks"
+SLIDES_DIR = "./data/slides"
+DOCS_DIR = "./data/docs" # Directory for generated descriptions
+PERSIST_INDEX_DIR = "./data/VectorStoreIndex/Rag" # UPDATED: Changed from "Rag 1" to "Rag"
 
-    vector_index = None
-    chat_engine = None
+# --- Initialize memory & multimodal LLM (cached for performance) ---
+@st.cache_resource
+def get_chat_memory_buffer():
+    """Caches and returns a ChatMemoryBuffer for the chat engine."""
+    return ChatMemoryBuffer.from_defaults(token_limit=10000)
 
-    try:
-        if os.path.exists(PERSIST_DIR) and os.listdir(PERSIST_DIR):
-            with st.spinner("Loading existing RAG knowledge base..."):
-                storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
-                vector_index = load_index_from_storage(storage_context, llm=llm)
-            st.success("RAG knowledge base loaded successfully!")
-        else:
-            with st.spinner("Initializing new RAG knowledge base..."):
-                vector_index = VectorStoreIndex.from_documents([], llm=llm)
-                vector_index.storage_context.persist(persist_dir=PERSIST_DIR)
-            st.info("New RAG knowledge base initialized.")
+@st.cache_resource
+def get_openai_multimodal_llm():
+    """Caches and returns an OpenAIMultiModal LLM instance."""
+    return OpenAIMultiModal(model=MODEL_NAME, api_key=os.environ["OPENAI_API_KEY"])
 
-        chat_engine = vector_index.as_chat_engine(
-            chat_mode="context",
-            memory=memory,
-            llm=llm,
-            system_prompt=system_prompt_chat,
-            verbose=True,
-            similarity_top_k=20,
-        )
-    except Exception as e:
-        st.error(f"Error initializing RAG components: {e}")
-        st.warning("The RAG chat might not function correctly.")
+memory = get_chat_memory_buffer()
+openai_mm_llm = get_openai_multimodal_llm()
 
-    return vector_index, chat_engine
-
-def evaluate_startup_criteria_raw(slide_descriptions_text: str, openai_api_key: str) -> str:
-    """
-    Evaluates a startup based on aggregated slide descriptions against specific criteria.
-    Returns the raw JSON string.
-    """
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    evaluation_llm = LI_OpenAI(temperature=0.2, model="gpt-4o", api_key=openai_api_key)
-
-    prompt = f"""
-    You are an expert Venture Capital analyst. Based on the following aggregated descriptions of pitch deck slides,
-    evaluate the startup against the following criteria. **Your response MUST be a valid JSON object ONLY**,
-    with no preamble, no markdown formatting (e.g., ```json), and no extra text outside the JSON.
-
-    Aggregated Slide Descriptions:
-    {slide_descriptions_text}
-
-    Evaluation Criteria:
-    1.  **Funding Round**: What funding round is the startup seeking or currently in (e.g., Seed, Series A, Series B, etc.)? If not explicitly stated, infer based on the stage (e.g., early traction suggests Seed/Pre-Seed, significant revenue suggests Series A/B).
-    2.  **Region**: What is the primary geographical region or target market of the startup (e.g., San Francisco, Europe, Global, specific countries)?
-    3.  **Category**: What is the primary industry or category of the startup (e.g., SaaS, FinTech, AI, Healthcare, E-commerce, Deep Tech)?
-    4.  **Excluded Fields**: List any areas or aspects that are explicitly stated as *not* being part of the startup's focus, product, or strategy. If none are explicitly excluded, state "None explicitly mentioned."
-
-    Provide the response in a JSON format with keys: "funding_round", "region", "category", "excluded_fields".
-    Example JSON structure:
-    {{
-        "funding_round": "Seed",
-        "region": "Global, focusing on North America",
-        "category": "AI-powered B2B SaaS for Supply Chain",
-        "excluded_fields": ["direct-to-consumer sales", "hardware manufacturing"]
-    }}
-    """
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = evaluation_llm.complete(prompt)
-            if response.text.strip():
-                return response.text.strip()
-            else:
-                print(f"Attempt {attempt+1}: AI response was empty.")
-        except Exception as e:
-            print(f"Attempt {attempt+1}: Error during AI evaluation: {e}")
-        time.sleep(1)
-    return ""
-
-# --- Streamlit UI ---
-
-# Initialize session state variables if they don't exist
-if "messages" not in st.session_state: # Fix: corrected 'not not' to 'not in'
-    st.session_state.messages = [{"role": "assistant", "content": "Hello! Upload a pitch deck PDF to get started, or ask me anything about venture capital."}]
-if "vector_index" not in st.session_state:
-    st.session_state.vector_index = None
+# --- Initialize session state for cumulative index and chat ---
+if "cumulative_vector_index_object" not in st.session_state:
+    st.session_state.cumulative_vector_index_object = None # The LlamaIndex object
 if "chat_engine" not in st.session_state:
-    st.session_state.chat_engine = None
+    st.session_state.chat_engine = None # The chat engine derived from the index
 
-st.title("VC Pitch Deck Analyzer & RAG Chat")
+def load_or_init_chat_engine_dynamic():
+    """
+    Loads an existing LlamaIndex VectorStoreIndex from persistence, or initializes a new one.
+    Also creates or re-creates the chat engine based on the current index.
+    """
+    os.makedirs(PERSIST_INDEX_DIR, exist_ok=True)
+    if st.session_state.cumulative_vector_index_object is None:
+        # Attempt to load if not already loaded in session
+        if os.path.exists(PERSIST_INDEX_DIR) and len(os.listdir(PERSIST_INDEX_DIR)) > 0:
+            st.info(f"Loading existing chat engine from: {PERSIST_INDEX_DIR}")
+            try:
+                vec_ctx = StorageContext.from_defaults(persist_dir=PERSIST_INDEX_DIR)
+                idx = load_index_from_storage(vec_ctx)
+                st.session_state.cumulative_vector_index_object = idx
+                st.session_state.chat_engine = idx.as_chat_engine(
+                    chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
+                    system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
+                )
+                st.success("RAG chat engine loaded from persisted index.")
+            except Exception as e:
+                st.error(f"Failed to load chat engine from '{PERSIST_INDEX_DIR}': {e}. Creating a new empty index.")
+                # Fallback to creating an empty index if loading fails
+                st.session_state.cumulative_vector_index_object = VectorStoreIndex([])
+                st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
+                    chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
+                    system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20
+                )
+        else:
+            st.info(f"No existing chat engine found at: {PERSIST_INDEX_DIR}. Creating a new empty index.")
+            st.session_state.cumulative_vector_index_object = VectorStoreIndex([])
+            st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
+                chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
+                system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20
+            )
+    
+    # If the index object exists but chat engine might need re-creation (e.g., after insert)
+    # This ensures the chat engine is always up-to-date with the index object
+    if st.session_state.cumulative_vector_index_object and st.session_state.chat_engine is None:
+         st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
+            chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
+            system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
+        )
 
-# Get OpenAI API Key
-openai_api_key = get_openai_api_key()
+# Call this function once at the start to load/initialize the index and engine
+load_or_init_chat_engine_dynamic()
 
-# Initialize RAG components if not already done
-if st.session_state.vector_index is None or st.session_state.chat_engine is None:
-    st.session_state.vector_index, st.session_state.chat_engine = initialize_rag_components(openai_api_key)
+# --- Initialize remaining session state variables ---
+if "slides_info" not in st.session_state:
+    st.session_state.slides_info = []
+if "uploaded_file_name" not in st.session_state:
+    st.session_state.uploaded_file_name = None
+if "evaluation_results" not in st.session_state:
+    st.session_state.evaluation_results = None
+if "history" not in st.session_state:
+    st.session_state.history = []
+if "current_conditions_prompt_display" not in st.session_state:
+    st.session_state.current_conditions_prompt_display = None
 
+# --- Helper Functions for Processing ---
+def process_pdf_to_images_app(pdf_path: str, slides_dir: str, base_name: str) -> list[dict]:
+    """
+    Converts a PDF to a series of images and saves them to the specified directory.
+    Returns a list of dictionaries with 'path' and 'page' info for each slide.
+    """
+    os.makedirs(slides_dir, exist_ok=True)
+    pdf_doc = fitz.open(pdf_path)
+    current_slides_info = []
+    if not pdf_doc.page_count:
+        st.warning("The uploaded PDF has no pages.")
+        return []
+    for i in range(len(pdf_doc)):
+        try:
+            pix = pdf_doc.load_page(i).get_pixmap()
+            # Ensure consistent naming for slides, especially for doc_id later
+            slide_name_suffix = f"_slide_{i + 1:02d}.png" # e.g., _slide_01.png, _slide_10.png
+            slide_path = os.path.join(slides_dir, f"{base_name}{slide_name_suffix}")
+            pix.save(slide_path)
+            current_slides_info.append({"path": slide_path, "page": i + 1, "base_name": base_name})
+        except Exception as e_slide:
+            st.error(f"Error processing slide {i+1}: {e_slide}")
+            current_slides_info.append({"path": None, "desc": f"Error generating image for slide {i+1}.", "page": i+1, "error": True, "base_name": base_name})
+    pdf_doc.close()
+    return current_slides_info
 
-# --- NEW: Tabbed Interface ---
-tab1, tab2 = st.tabs(["Upload & Analyze Pitch Deck", "RAG Chat"])
+def describe_slides_app(slides_info: list[dict], openai_mm_llm: OpenAIMultiModal) -> list[dict]:
+    """
+    Generates descriptions for each slide image within the Streamlit context using a multimodal LLM.
+    Updates the 'slides_info' list with the generated descriptions.
+    """
+    for info in slides_info:
+        if info["path"] and not info.get("error"):
+            try:
+                # Use the describe_image function from slide_description_gen.py
+                description = describe_image(info["path"], openai_mm_llm)
+                info["desc"] = description
+            except Exception as e_desc:
+                st.error(f"Error generating description for slide {info['page']}: {e_desc}")
+                info["desc"] = f"Error generating description for slide {info['page']}."
+                info["error"] = True
+    return slides_info
+
+# --- Tab Layout ---
+tab1, tab2 = st.tabs(["📤 Upload & Analyze Pitch Deck", "💬 Chat with General Knowledge Base"])
 
 with tab1:
-    st.header("Upload & Analyze Pitch Deck")
-    uploaded_file = st.file_uploader("Upload a Pitch Deck PDF", type="pdf")
-
-    # Use a unique key for each upload (e.g., file name + size)
-    file_key = None
+    st.header(" 📤  Upload & Analyze Pitch Deck")
+    uploaded_file = st.file_uploader("Select a PDF pitch deck", type="pdf", key="pdf_uploader")
     if uploaded_file:
-        file_key = f"{uploaded_file.name}_{uploaded_file.size}"
-        if st.session_state.get("last_file_key") != file_key:
-            # New file uploaded, reset state
-            st.session_state["last_file_key"] = file_key
-            st.session_state["image_paths"] = None
-            st.session_state["current_pitch_deck_documents"] = None
+        # Only process if a new file is uploaded
+        if st.session_state.uploaded_file_name != uploaded_file.name:
+            # Reset states for the new upload
+            st.session_state.slides_info = []
+            st.session_state.evaluation_results = None
+            st.session_state.current_conditions_prompt_display = None # Clear old prompt display
+            st.session_state.uploaded_file_name = uploaded_file.name
 
-    if uploaded_file and st.session_state.get("image_paths") is None:
-        st.session_state.messages.append({"role": "user", "content": f"Uploaded: {uploaded_file.name}"})
-        st.write(f"Processing '{uploaded_file.name}'...")
+            with st.spinner(f"Processing {uploaded_file.name}..."):
+                # Ensure base directories exist
+                os.makedirs(PITCHDECKS_DIR, exist_ok=True)
+                os.makedirs(SLIDES_DIR, exist_ok=True)
+                os.makedirs(DOCS_DIR, exist_ok=True) # Ensure the new docs directory exists
 
-        base_name = uploaded_file.name.replace(".pdf", "").replace(" ", "_").lower()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        unique_base_name = f"{base_name}_{timestamp}"
+                # 1. Save uploaded PDF to data/pitchdecks/
+                pdf_path = os.path.join(PITCHDECKS_DIR, uploaded_file.name)
+                with open(pdf_path, "wb") as f:
+                    f.write(uploaded_file.read())
+                st.success(f"Uploaded pitch deck saved to: {pdf_path}")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            pdf_path = os.path.join(temp_dir, uploaded_file.name)
-            with open(pdf_path, "wb") as f:
-                f.write(uploaded_file.getbuffer())
+                base_file_name = os.path.splitext(uploaded_file.name)[0]
 
-            st.info("Splitting PDF into images...")
-            current_slides_output_dir = os.path.join(temp_dir, "current_slides")
-            os.makedirs(current_slides_output_dir, exist_ok=True)
-            image_paths = pdf_to_images(pdf_path, current_slides_output_dir, unique_base_name)
-            st.success(f"PDF split into {len(image_paths)} images.")
+                # 2. Process PDF to images and save to data/slides/
+                # Create a specific sub-folder for this pitch deck's slides to avoid naming conflicts
+                current_slides_output_dir = os.path.join(SLIDES_DIR, base_file_name)
+                os.makedirs(current_slides_output_dir, exist_ok=True)
+                current_slides_info = process_pdf_to_images_app(pdf_path, current_slides_output_dir, base_file_name)
+                st.session_state.slides_info = current_slides_info # Update session state
 
-            if image_paths:
-                st.info("Generating descriptions for each slide using AI...")
-                current_pitch_deck_documents = describe_slides_in_folder(current_slides_output_dir, openai_api_key)
-                st.success(f"Generated descriptions for {len(current_pitch_deck_documents)} slides.")
+                # 3. Describe slides
+                if st.session_state.slides_info:
+                    st.session_state.slides_info = describe_slides_app(st.session_state.slides_info, openai_mm_llm)
 
-                if current_pitch_deck_documents:
-                    st.subheader("Slide Descriptions (First 100 chars):")
-                    for i, doc in enumerate(current_pitch_deck_documents):
-                        st.text(f"Slide {doc.metadata.get('page_number', i+1)}: {doc.text[:100]}...")
+                    # 4. Save generated descriptions to data/docs/
+                    descriptions_list_for_json = []
+                    for info in st.session_state.slides_info:
+                        if not info.get("error") and info.get("desc"):
+                            # Prepare a dictionary that can be easily saved as JSON
+                            descriptions_list_for_json.append({
+                                "text": info["desc"],
+                                "doc_id": f"{base_file_name}_slide_{info['page']}",
+                                "metadata": {
+                                    "startup_name": base_file_name,
+                                    "page_number": info['page'],
+                                    "source_file": uploaded_file.name,
+                                    "image_path": info['path'] # Include image path for reference
+                                }
+                            })
+                    if descriptions_list_for_json:
+                        descriptions_json_filename = f"{base_file_name}_descriptions.json"
+                        descriptions_json_path = os.path.join(DOCS_DIR, descriptions_json_filename)
+                        with open(descriptions_json_path, 'w') as f:
+                            json.dump(descriptions_list_for_json, f, indent=4)
+                        st.success(f"Generated slide descriptions saved to: {descriptions_json_path}")
+                    else:
+                        st.warning("No valid descriptions were generated to save.")
 
-                    print(f"DEBUG: Number of documents generated for RAG: {len(current_pitch_deck_documents)}")
+                # 5. Evaluate startup - calling the imported function
+                all_descriptions = "\n\n---\n\n".join([
+                    f"Content from Slide {info['page']}:\n{info['desc']}"
+                    for info in st.session_state.slides_info if not info.get("error") and info.get("desc")
+                ])
+                if not all_descriptions.strip():
+                    st.warning("No valid slide descriptions available to perform startup evaluation.")
+                else:
+                    st.subheader(" ⚙️  Performing Startup Evaluation...")
+                    with st.spinner("Evaluating conditions based on slide descriptions..."):
+                        # Calling the imported evaluate_startup function
+                        st.session_state.evaluation_results = evaluate_startup(all_descriptions, uploaded_file.name, OPENAI_API_KEY)
+                        st.session_state.current_conditions_prompt_display = None # Clear this as the new evaluation is dynamic
 
-                    st.info("Adding new slide descriptions to the RAG knowledge base...")
-                    try:
-                        for doc in current_pitch_deck_documents:
-                            st.session_state.vector_index.insert(doc)
-                        st.session_state.vector_index.storage_context.persist(persist_dir=PERSIST_DIR)
-                        st.success("New slide descriptions successfully added to the RAG knowledge base!")
-
-                        # --- Show evaluation criteria ---
-                        st.markdown("""
-**Automated Evaluation Criteria:**
-
-1. **Funding Round**: What funding round is the startup seeking or currently in (e.g., Seed, Series A, Series B, etc.)? If not explicitly stated, infer based on the stage (e.g., early traction suggests Seed/Pre-Seed, significant revenue suggests Series A/B).
-2. **Region**: What is the primary geographical region or target market of the startup (e.g., San Francisco, Europe, Global, specific countries)?
-3. **Category**: What is the primary industry or category of the startup (e.g., SaaS, FinTech, AI, Healthcare, E-commerce, Deep Tech)?
-4. **Excluded Fields**: List any areas or aspects that are explicitly stated as *not* being part of the startup's focus, product, or strategy. If none are explicitly excluded, state "None explicitly mentioned."
-""")
-                        # --- End criteria display ---
-
-                        st.subheader("Automated Startup Evaluation")
-                        aggregated_descriptions = "\n\n".join([doc.text for doc in current_pitch_deck_documents])
-                        
-                        raw_evaluation_response_text = ""
-
-                        with st.spinner("Running AI evaluation..."):
-                            raw_evaluation_response_text = evaluate_startup_criteria_raw(aggregated_descriptions, openai_api_key)
-                        
-                        if raw_evaluation_response_text:
-                            try:
-                                evaluation_result = json.loads(raw_evaluation_response_text)
-                                st.json(evaluation_result)
-                            except json.JSONDecodeError as e:
-                                st.error(f"Failed to parse AI evaluation response as JSON: {e}")
-                                st.text_area("Raw AI Evaluation Response (for debugging):", raw_evaluation_response_text, height=200)
-                                st.warning("Could not complete automated evaluation due to JSON parsing error.")
-                            except Exception as e:
-                                st.error(f"An unexpected error occurred after evaluation: {e}")
-                                st.text_area("Raw AI Evaluation Response (for debugging):", raw_evaluation_response_text, height=200)
+                    # --- ADDED: Make the index cumulative ---
+                    if st.session_state.cumulative_vector_index_object:
+                        st.info("Adding new slide descriptions to the RAG knowledge base...")
+                        new_documents_for_rag = []
+                        for info in st.session_state.slides_info:
+                            if not info.get("error") and info.get("desc"):
+                                # Create a LlamaIndex Document for each slide description
+                                # Ensure doc_id is unique across all pitch decks and slides
+                                doc_id = f"{base_file_name}_slide_{info['page']}"
+                                new_documents_for_rag.append(
+                                    Document(
+                                        text=info["desc"],
+                                        doc_id=doc_id, # Unique ID for each slide
+                                        metadata={
+                                            "startup_name": base_file_name, # Original file name as startup name
+                                            "page_number": info['page'],
+                                            "source_file": uploaded_file.name # Original PDF filename
+                                        }
+                                    )
+                                )
+                        if new_documents_for_rag:
+                            with st.spinner("Updating RAG index with new pitch deck data..."):
+                                try:
+                                    for doc_to_insert in new_documents_for_rag:
+                                        # LlamaIndex's insert method adds new documents incrementally
+                                        st.session_state.cumulative_vector_index_object.insert(doc_to_insert)
+                                    
+                                    # Persist the updated index to disk
+                                    st.session_state.cumulative_vector_index_object.storage_context.persist(persist_dir=PERSIST_INDEX_DIR)
+                                    st.success(f"Successfully added {len(new_documents_for_rag)} new slide descriptions to the RAG knowledge base and persisted the index.")
+                                    
+                                    # Re-create chat engine with the updated index object to ensure it reflects changes
+                                    st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
+                                        chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
+                                        system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
+                                    )
+                                except Exception as e_insert_persist:
+                                    st.error(f"Failed to update or persist the cumulative index: {e_insert_persist}")
                         else:
-                            st.warning("AI evaluation returned an empty or invalid response.")
-                            st.text_area("Raw AI Evaluation Response (for debugging):", raw_evaluation_response_text, height=100)
-                    except Exception as e:
-                        st.error(f"Error updating RAG knowledge base: {e}")
-    else:
-        st.info("Upload a PDF pitch deck to begin analysis and evaluation.")
+                            st.warning("No valid documents generated from this pitch deck to add to the RAG index.")
+                    else:
+                        st.warning("Cumulative index object is not initialized. Cannot add new documents to RAG.")
+        # Display results (unchanged in logic, but now expects the new JSON structure)
+        if st.session_state.slides_info:
+            st.subheader(" 📄  Slide Previews & Descriptions")
+            for info in st.session_state.slides_info:
+                if info["path"] and not info.get("error"):
+                    slide_col_disp, desc_col_disp = st.columns([1, 1])
+                    slide_col_disp.image(info["path"], use_container_width=True, caption=f"Slide {info['page']}")
+                    with desc_col_disp.expander(f"Description for Slide {info['page']}"):
+                        desc_col_disp.write(info["desc"])
+                elif info.get("error"):
+                    st.warning(f"Could not display Slide {info['page']}. Description attempt: {info['desc']}")
+            st.markdown("---")
+        if st.session_state.evaluation_results:
+            # Removed the detailed prompt display logic as the new evaluation is dynamic
+            st.subheader(" 📊  Startup Evaluation Results")
+            if isinstance(st.session_state.evaluation_results, dict) and "error" in st.session_state.evaluation_results:
+                st.error(f"Evaluation Error: {st.session_state.evaluation_results.get('error', 'Could not generate evaluation.')}")
+                if "raw_llm_response_eval" in st.session_state.evaluation_results: # Note: changed from raw_response to raw_llm_response_eval
+                    st.text_area("Problematic Raw Response (if available)", st.session_state.evaluation_results["raw_llm_response_eval"], height=150)
+            elif isinstance(st.session_state.evaluation_results, dict):
+                # This will display the JSON directly, which is what the new evaluate_startup returns
+                st.json(st.session_state.evaluation_results)
+            else:
+                st.error("Evaluation results are in an unexpected format.")
+                st.write(st.session_state.evaluation_results)
 
 with tab2:
-    st.header("Cumulative RAG Chat")
-
-    if st.session_state.chat_engine:
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        if prompt := st.chat_input("Ask me about the pitch decks or venture capital..."):
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    response = st.session_state.chat_engine.chat(prompt)
-                    st.markdown(response.response)
-            st.session_state.messages.append({"role": "assistant", "content": response.response})
+    st.header(" 💬  Chat with General Knowledge Base")
+    # Reference the chat_engine from session state
+    if not st.session_state.chat_engine:
+        st.warning("Chat engine is not available. Please check configurations and persisted index path.")
     else:
-        st.warning("RAG chat engine is not initialized. Please check API key and ensure index can be loaded/created.")
-
-st.markdown("---")
-st.markdown("Developed with ❤️ by cosmincbodea")
+        for msg in st.session_state.history:
+            st.chat_message(msg["role"]).write(msg["content"])
+        user_input = st.chat_input("Ask about general VC topics or indexed documents...")
+        if user_input:
+            st.chat_message("user").write(user_input)
+            st.session_state.history.append({"role": "user", "content": user_input})
+            with st.spinner("Thinking..."):
+                try:
+                    response = st.session_state.chat_engine.chat(user_input)
+                    assistant_text = response.response
+                    st.chat_message("assistant").write(assistant_text)
+                    st.session_state.history.append({"role": "assistant", "content": assistant_text})
+                except Exception as e_chat:
+                    st.error(f"Error during chat: {e_chat}")
+                    st.session_state.history.append({"role": "assistant", "content": f"Sorry, I encountered an error: {e_chat}"})
