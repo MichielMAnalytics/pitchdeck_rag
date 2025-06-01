@@ -35,7 +35,7 @@ def pdf_to_images(pdf_path: str, output_folder: str, base_name: str) -> list[str
 if __name__ == "__main__":
     # Define dummy paths for demonstration
     # In a real scenario, these would come from user input or config
-    dummy_pitchdecks_path = './data/uploaded pitchdecks/' # Updated path
+    dummy_pitchdecks_path = './data/uploaded_pitchdecks/' # Updated path
     dummy_slides_path = './data/slides/dummy_startup_slides/' # Updated path for specific slides
     os.makedirs(dummy_pitchdecks_path, exist_ok=True)
     os.makedirs(dummy_slides_path, exist_ok=True) # Ensure slides sub-directory exists

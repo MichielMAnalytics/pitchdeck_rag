@@ -43,7 +43,7 @@ SYSTEM_PROMPT_CHAT = (
 )
 
 # --- Define Persistent Directories ---
-PITCHDECKS_DIR = "./data/uploaded pitchdecks"
+PITCHDECKS_DIR = "./data/uploaded_pitchdecks"
 SLIDES_DIR = "./data/slides"
 DOCS_DIR = "./data/docs" # Directory for generated descriptions
 PERSIST_INDEX_DIR = "./data/VectorStoreIndex/Rag" # UPDATED: Changed from "Rag 1" to "Rag"
@@ -190,7 +190,7 @@ with tab1:
                 os.makedirs(SLIDES_DIR, exist_ok=True)
                 os.makedirs(DOCS_DIR, exist_ok=True) # Ensure the new docs directory exists
 
-                # 1. Save uploaded PDF to data/uploaded pitchdecks/
+                # 1. Save uploaded PDF to data/uploaded_pitchdecks/
                 pdf_path = os.path.join(PITCHDECKS_DIR, uploaded_file.name)
                 with open(pdf_path, "wb") as f:
                     f.write(uploaded_file.read())
