@@ -1,4 +1,3 @@
-# src/pitchdeck_evaluator.py
 import openai
 import json
 import re

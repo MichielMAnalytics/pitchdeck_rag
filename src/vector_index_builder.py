@@ -1,4 +1,3 @@
-# src/vector_index_builder.py
 import json
 import os
 from llama_index.core import Document, VectorStoreIndex, StorageContext

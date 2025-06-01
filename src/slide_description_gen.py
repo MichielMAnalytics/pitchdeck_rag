@@ -1,9 +1,7 @@
-# src/slide_description_gen.py
 import os
-# from llama_index.core import SimpleDirectoryReader, Document # Remove SimpleDirectoryReader if it's not used otherwise
 from llama_index.multi_modal_llms.openai import OpenAIMultiModal
-from llama_index.core import Document # Document is still in core
-from llama_index.core.schema import ImageDocument # <--- CORRECTED: Import ImageDocument from schema
+from llama_index.core import Document
+from llama_index.core.schema import ImageDocument 
 
 def describe_image(image_path: str, openai_mm_llm: OpenAIMultiModal) -> str:
     """
@@ -13,7 +11,7 @@ def describe_image(image_path: str, openai_mm_llm: OpenAIMultiModal) -> str:
         raise FileNotFoundError(f"Image file not found: {image_path}")
     # Load image document correctly for multimodal LLM
     # Pass the image path directly to ImageDocument
-    image_documents = [ImageDocument(image_path=image_path)] # <--- THIS LINE IS CORRECTED
+    image_documents = [ImageDocument(image_path=image_path)]
     # Define the query
     query = "This image is part of a slidedeck, describe the relevant content for analysis of the presentation. Please respond in full sentences and without empty lines."
     # Get the response

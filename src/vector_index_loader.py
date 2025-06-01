@@ -1,4 +1,3 @@
-# src/vector_index_loader.py
 import os
 from llama_index.core import StorageContext, load_index_from_storage, VectorStoreIndex
 from llama_index.llms.openai import OpenAI as LI_OpenAI

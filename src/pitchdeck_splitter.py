@@ -1,7 +1,6 @@
-# src/pitchdeck_splitter.py
 import fitz  # PyMuPDF
 import os
-from PIL import Image # Although PIL.Image isn't directly used for saving pix.save, it's a common dependency.
+from PIL import Image
 
 def pdf_to_images(pdf_path: str, output_folder: str, base_name: str) -> list[str]:
     """

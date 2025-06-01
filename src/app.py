@@ -1,8 +1,7 @@
-# src/app.py
 import streamlit as st
 import os
 import openai
-import fitz  # PyMuPDF for PDF processing
+import fitz
 from llama_index.core import StorageContext, load_index_from_storage, SimpleDirectoryReader, Document, VectorStoreIndex
 from llama_index.llms.openai import OpenAI as LI_OpenAI
 from llama_index.core.memory import ChatMemoryBuffer
@@ -14,7 +13,7 @@ import sys
 
 from pitchdeck_splitter import pdf_to_images
 from slide_description_gen import describe_image
-from pitchdeck_evaluator import evaluate_startup, conditions_prompt_text
+from pitchdeck_evaluator import evaluate_startup
 
 # Add the parent directory to the system path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -110,9 +109,6 @@ def load_or_init_chat_engine_dynamic(msg_container):
             chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
             system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
         )
-
-# Call this function once at the start to load/initialize the index and engine
-# load_or_init_chat_engine_dynamic()
 
 # --- Initialize remaining session state variables ---
 if "slides_info" not in st.session_state:
@@ -312,18 +308,27 @@ with tab1:
 
         # Move the evaluation section here, after the slides
         if st.session_state.evaluation_results:
-            st.subheader(" 📊  Startup Evaluation Results")
-            # Show the evaluation criteria right before the raw_llm_response_eval
-            st.markdown(f"**Evaluation Criteria:**\n\n{conditions_prompt_text}")
-            if isinstance(st.session_state.evaluation_results, dict) and "error" in st.session_state.evaluation_results:
-                st.error(f"Evaluation Error: {st.session_state.evaluation_results.get('error', 'Could not generate evaluation.')}")
-                if "raw_llm_response_eval" in st.session_state.evaluation_results:
-                    st.text_area("Problematic Raw Response (if available)", st.session_state.evaluation_results["raw_llm_response_eval"], height=150)
-            elif isinstance(st.session_state.evaluation_results, dict):
-                st.json(st.session_state.evaluation_results)
+            st.subheader(" 📊  Startup Evaluation Results by LLM")
+            results = st.session_state.evaluation_results
+            # Define the criteria and their corresponding keys
+            criteria = [
+                ("Funding Round", "funding_round", "What funding round is the startup seeking or currently in?"),
+                ("Region", "region", "What is the primary geographical region or target market of the startup?"),
+                ("Category", "category", "What is the primary industry or category of the startup (e.g., SaaS, FinTech, AI, Healthcare, E-commerce, Deep Tech)?"),
+                ("Excluded Fields", "excluded_fields", "List whether the startup is active in any of the following excluded fields: crypto development, cryptocurrencies, or drug development. If none are mentioned, state 'None explicitly mentioned.'"),
+            ]
+            if isinstance(results, dict) and "error" in results:
+                st.error(f"Evaluation Error: {results.get('error', 'Could not generate evaluation.')}")
+                if "raw_llm_response_eval" in results:
+                    st.text_area("Problematic Raw Response (if available)", results["raw_llm_response_eval"], height=150)
+            elif isinstance(results, dict):
+                st.markdown(f"**Startup Name:** {results.get('startup_name', 'N/A')}")
+                for idx, (title, key, desc) in enumerate(criteria, 1):
+                    st.markdown(f"**{idx}. {title}:** {desc}")
+                    st.markdown(f"**Answer:** {results.get(key, 'N/A')}\n")
             else:
                 st.error("Evaluation results are in an unexpected format.")
-                st.write(st.session_state.evaluation_results)
+                st.write(results)
 
 with tab2:
     st.header(" 💬  Chat with General Knowledge Base")
