@@ -69,7 +69,7 @@ if __name__ == "__main__":
         #         {"text": "This is a test document about startup A.", "doc_id": "test_doc_A", "metadata": {"startup_name": "Test Startup A"}},
         #         {"text": "This is another test document about startup B.", "doc_id": "test_doc_B", "metadata": {"startup_name": "Test Startup B"}}
         #     ], f, indent=4)
-        index_persist_dir = "./data/VectorStoreIndex/Rag" # Updated path
+        index_persist_dir = "./data/vector_store_index" # Updated path
         if not os.path.exists(input_json_file):
             print(f"Warning: Input JSON file '{input_json_file}' not found.")
             print("Please run slide_description_gen.py first or create a dummy JSON file.")

@@ -10,13 +10,6 @@ env/
 venv/
 .env
 
-# LlamaIndex
-data/VectorStoreIndex/RAG/
-
-data/docs/
-data/slides/
-data/uploaded_pitchdecks/
-
 # Streamlit
 .streamlit/secrets.toml
 

@@ -43,10 +43,15 @@ SYSTEM_PROMPT_CHAT = (
 )
 
 # --- Define Persistent Directories ---
+DATA_DIR = "./data"
 PITCHDECKS_DIR = "./data/uploaded_pitchdecks"
 SLIDES_DIR = "./data/slides"
-DOCS_DIR = "./data/docs" # Directory for generated descriptions
-PERSIST_INDEX_DIR = "./data/VectorStoreIndex/Rag" # UPDATED: Changed from "Rag 1" to "Rag"
+DOCS_DIR = "./data/docs"
+PERSIST_INDEX_DIR = "./data/vector_store_index"
+
+# --- Ensure persistent directories exist ---
+for directory in [DATA_DIR, PITCHDECKS_DIR, SLIDES_DIR, DOCS_DIR, PERSIST_INDEX_DIR]:
+    os.makedirs(directory, exist_ok=True)
 
 # --- Initialize memory & multimodal LLM (cached for performance) ---
 @st.cache_resource

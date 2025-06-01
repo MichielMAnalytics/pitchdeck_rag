@@ -41,7 +41,7 @@ if __name__ == "__main__":
         print("Please set it or replace TEST_API_KEY with your key for testing.")
     else:
         # This path should match where your vector_index_builder.py saved the index
-        index_persist_dir = "./data/VectorStoreIndex/Rag" # Updated path
+        index_persist_dir = "./data/vector_store_index" # Updated path
         # Dummy memory and prompt for testing loader
         dummy_memory = ChatMemoryBuffer.from_defaults(token_limit=1000)
         dummy_system_prompt = "You are a test assistant."

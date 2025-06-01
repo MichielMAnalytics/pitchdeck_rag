@@ -36,7 +36,7 @@ A Streamlit application to analyze VC pitch decks, generate slide descriptions, 
 The application expects certain directory structures for data storage and persistence. These will be created automatically if they don't exist:
 * `data/pitchdecks/`: (Optional) You can place sample PDF pitch decks here.
 * `data/slides_output/`: (Created by `slide_description_gen.py` if run standalone)
-* `data/VectorStoreIndex/RAG/`: (Created and managed by LlamaIndex) This directory will store the persistent vector index for your RAG knowledge base.
+* `data/vector_store_index/`: (Created and managed by LlamaIndex) This directory will store the persistent vector index for your RAG knowledge base.
 
 ## 🏃 How to Run the Application
 1.  **Ensure your virtual environment is active.**
@@ -64,7 +64,7 @@ The application expects certain directory structures for data storage and persis
 * **`src/slide_description_gen.py`**: Contains the core logic for generating descriptions from images. Its `describe_image` function is utilized by `app.py`.
 * **`src/vector_index_builder.py`**: A standalone script (can be run once) to build an initial RAG index from a pre-existing collection of documents (e.g., a `v2_slides_descriptions.json` created by `slide_description_gen.py` run in batch mode). This helps pre-populate your general knowledge base.
 * **`src/vector_index_loader.py`**: A helper module to load the index. The primary loading/initialization for the cumulative index is now handled directly within `app.py` for dynamic updates.
-* **Persistence**: The RAG vector index is persisted in `data/VectorStoreIndex/RAG/`. This means the knowledge base grows and is saved across application restarts.
+* **Persistence**: The RAG vector index is persisted in `data/vector_store_index/`. This means the knowledge base grows and is saved across application restarts.
 * **Temporary Files**: Uploaded PDFs and generated images for the *current* session's processing are stored in a temporary directory and cleaned up (Streamlit usually handles this on rerun, but for large files or long-running processes, manual cleanup might be needed).
 
 ## ⚠️ Important Considerations
