@@ -4,9 +4,14 @@ import json
 import re
 import os
 
-# You'll need to pass the OpenAI API key to this function or ensure it's set
-# as an environment variable in the context where this function is called.
-# For Streamlit app, we'll pass it from app.py.
+# --- Move this to the top level ---
+conditions_prompt_text = """
+Based on the description of the startup from its pitch deck slides, please answer **each** of the following criteria:
+1.  **Funding Round**: What funding round is the startup seeking or currently in (e.g., Seed, Series A, Series B, etc.)? If not explicitly stated, infer based on the stage (e.g., early traction suggests Seed/Pre-Seed, significant revenue suggests Series A/B).
+2.  **Region**: What is the primary geographical region or target market of the startup (e.g., San Francisco, Europe, Global, specific countries)?
+3.  **Category**: What is the primary industry or category of the startup (e.g., SaaS, FinTech, AI, Healthcare, E-commerce, Deep Tech)?
+4.  **Excluded Fields**: List whether the startup is active in any of the following fields: crypto development, cryptocurrencies, or drug development. If none are mentioned, state "None explicitly mentioned."
+"""
 
 def evaluate_startup(all_descriptions: str, uploaded_file_name: str, openai_api_key: str):
     """
@@ -16,16 +21,10 @@ def evaluate_startup(all_descriptions: str, uploaded_file_name: str, openai_api_
     # Ensure the OpenAI API key is set for this context
     openai.api_key = openai_api_key
 
+    global conditions_prompt_text
     startup_name_eval = os.path.splitext(uploaded_file_name)[0].replace("_", " ").replace("-", " ").title()
 
     # Updated conditions and response format based on user's request
-    conditions_prompt_text = f"""
-Based on the description of the startup from its pitch deck slides, please answer **each** of the following criteria:
-1.  **Funding Round**: What funding round is the startup seeking or currently in (e.g., Seed, Series A, Series B, etc.)? If not explicitly stated, infer based on the stage (e.g., early traction suggests Seed/Pre-Seed, significant revenue suggests Series A/B).
-2.  **Region**: What is the primary geographical region or target market of the startup (e.g., San Francisco, Europe, Global, specific countries)?
-3.  **Category**: What is the primary industry or category of the startup (e.g., SaaS, FinTech, AI, Healthcare, E-commerce, Deep Tech)?
-4.  **Excluded Fields**: List whether the startup is active in any of the following fields: crypto development, cryptocurrencies, or drug development. If none are mentioned, state "None explicitly mentioned."
-"""
     format_response_prompt_text = f"""
 Provide your response in **valid and complete JSON format** with the following structure.
 Ensure the JSON is parseable:

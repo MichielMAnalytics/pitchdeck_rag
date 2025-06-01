@@ -14,7 +14,7 @@ import sys
 
 from pitchdeck_splitter import pdf_to_images
 from slide_description_gen import describe_image
-from pitchdeck_evaluator import evaluate_startup
+from pitchdeck_evaluator import evaluate_startup, conditions_prompt_text
 
 # Add the parent directory to the system path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -73,16 +73,15 @@ if "cumulative_vector_index_object" not in st.session_state:
 if "chat_engine" not in st.session_state:
     st.session_state.chat_engine = None # The chat engine derived from the index
 
-def load_or_init_chat_engine_dynamic():
+def load_or_init_chat_engine_dynamic(msg_container):
     """
     Loads an existing LlamaIndex VectorStoreIndex from persistence, or initializes a new one.
-    Also creates or re-creates the chat engine based on the current index.
+    All status messages are displayed in the provided Streamlit container.
     """
-    os.makedirs(PERSIST_INDEX_DIR, exist_ok=True)
     if st.session_state.cumulative_vector_index_object is None:
         # Attempt to load if not already loaded in session
         if os.path.exists(PERSIST_INDEX_DIR) and len(os.listdir(PERSIST_INDEX_DIR)) > 0:
-            st.info(f"Loading existing chat engine from: {PERSIST_INDEX_DIR}")
+            # msg_container.info(f"Loading existing chat engine from: {PERSIST_INDEX_DIR}")
             try:
                 vec_ctx = StorageContext.from_defaults(persist_dir=PERSIST_INDEX_DIR)
                 idx = load_index_from_storage(vec_ctx)
@@ -91,33 +90,29 @@ def load_or_init_chat_engine_dynamic():
                     chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
                     system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
                 )
-                st.success("RAG chat engine loaded from persisted index.")
+                msg_container.success("RAG chat engine loaded from persisted index.")
             except Exception as e:
-                st.error(f"Failed to load chat engine from '{PERSIST_INDEX_DIR}': {e}. Creating a new empty index.")
-                # Fallback to creating an empty index if loading fails
+                msg_container.error(f"Failed to load chat engine from '{PERSIST_INDEX_DIR}': {e}. Creating a new empty index.")
                 st.session_state.cumulative_vector_index_object = VectorStoreIndex([])
                 st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
                     chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
                     system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20
                 )
         else:
-            st.info(f"No existing chat engine found at: {PERSIST_INDEX_DIR}. Creating a new empty index.")
+            msg_container.info(f"No existing chat engine found at. Creating a new empty index.")
             st.session_state.cumulative_vector_index_object = VectorStoreIndex([])
             st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
                 chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
                 system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20
             )
-    
-    # If the index object exists but chat engine might need re-creation (e.g., after insert)
-    # This ensures the chat engine is always up-to-date with the index object
     if st.session_state.cumulative_vector_index_object and st.session_state.chat_engine is None:
-         st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
+        st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
             chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
             system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
         )
 
 # Call this function once at the start to load/initialize the index and engine
-load_or_init_chat_engine_dynamic()
+# load_or_init_chat_engine_dynamic()
 
 # --- Initialize remaining session state variables ---
 if "slides_info" not in st.session_state:
@@ -162,16 +157,21 @@ def describe_slides_app(slides_info: list[dict], openai_mm_llm: OpenAIMultiModal
     Generates descriptions for each slide image within the Streamlit context using a multimodal LLM.
     Updates the 'slides_info' list with the generated descriptions.
     """
+    progress_bar = st.progress(0, text="Generating slide descriptions...")
+    total = len([info for info in slides_info if info["path"] and not info.get("error")])
+    completed = 0
     for info in slides_info:
         if info["path"] and not info.get("error"):
             try:
-                # Use the describe_image function from slide_description_gen.py
                 description = describe_image(info["path"], openai_mm_llm)
                 info["desc"] = description
             except Exception as e_desc:
                 st.error(f"Error generating description for slide {info['page']}: {e_desc}")
                 info["desc"] = f"Error generating description for slide {info['page']}."
                 info["error"] = True
+            completed += 1
+            progress_bar.progress(completed / total, text=f"Generating slide descriptions... ({completed}/{total})")
+    progress_bar.empty()  # Remove the progress bar when done
     return slides_info
 
 # --- Tab Layout ---
@@ -190,16 +190,11 @@ with tab1:
             st.session_state.uploaded_file_name = uploaded_file.name
 
             with st.spinner(f"Processing {uploaded_file.name}..."):
-                # Ensure base directories exist
-                os.makedirs(PITCHDECKS_DIR, exist_ok=True)
-                os.makedirs(SLIDES_DIR, exist_ok=True)
-                os.makedirs(DOCS_DIR, exist_ok=True) # Ensure the new docs directory exists
-
                 # 1. Save uploaded PDF to data/uploaded_pitchdecks/
                 pdf_path = os.path.join(PITCHDECKS_DIR, uploaded_file.name)
                 with open(pdf_path, "wb") as f:
                     f.write(uploaded_file.read())
-                st.success(f"Uploaded pitch deck saved to: {pdf_path}")
+                st.success(f"Uploaded pitch deck!")
 
                 base_file_name = os.path.splitext(uploaded_file.name)[0]
 
@@ -234,7 +229,7 @@ with tab1:
                         descriptions_json_path = os.path.join(DOCS_DIR, descriptions_json_filename)
                         with open(descriptions_json_path, 'w') as f:
                             json.dump(descriptions_list_for_json, f, indent=4)
-                        st.success(f"Generated slide descriptions saved to: {descriptions_json_path}")
+                        st.success(f"Generated and saved slide descriptions for {base_file_name}.")
                     else:
                         st.warning("No valid descriptions were generated to save.")
 
@@ -254,7 +249,7 @@ with tab1:
 
                     # --- ADDED: Make the index cumulative ---
                     if st.session_state.cumulative_vector_index_object:
-                        st.info("Adding new slide descriptions to the RAG knowledge base...")
+                        # st.info("Adding new slide descriptions to the RAG knowledge base...")
                         new_documents_for_rag = []
                         for info in st.session_state.slides_info:
                             if not info.get("error") and info.get("desc"):
@@ -297,24 +292,34 @@ with tab1:
         # Display results (unchanged in logic, but now expects the new JSON structure)
         if st.session_state.slides_info:
             st.subheader(" 📄  Slide Previews & Descriptions")
-            for info in st.session_state.slides_info:
-                if info["path"] and not info.get("error"):
-                    slide_col_disp, desc_col_disp = st.columns([1, 1])
-                    slide_col_disp.image(info["path"], use_container_width=True, caption=f"Slide {info['page']}")
-                    with desc_col_disp.expander(f"Description for Slide {info['page']}"):
-                        desc_col_disp.write(info["desc"])
-                elif info.get("error"):
-                    st.warning(f"Could not display Slide {info['page']}. Description attempt: {info['desc']}")
-            st.markdown("---")
+            startup_name = st.session_state.slides_info[0].get("base_name", "Startup")
+            slide_options = [
+                f"Slide {info['page']}" for info in st.session_state.slides_info if info["path"] and not info.get("error")
+            ]
+            if slide_options:
+                selected_slide = st.selectbox(
+                    f"Select a slide from {startup_name} to preview and see its description:",
+                    slide_options,
+                    key="slide_selectbox"
+                )
+                selected_index = slide_options.index(selected_slide)
+                info = [s for s in st.session_state.slides_info if s["path"] and not s.get("error")][selected_index]
+                with st.expander(f"{startup_name} - {selected_slide}", expanded=True):
+                    st.image(info["path"], use_container_width=True, caption=selected_slide)
+                    st.markdown(f"**Description:**\n\n{info['desc']}")
+            else:
+                st.warning("No valid slides to display.")
+
+        # Move the evaluation section here, after the slides
         if st.session_state.evaluation_results:
-            # Removed the detailed prompt display logic as the new evaluation is dynamic
             st.subheader(" 📊  Startup Evaluation Results")
+            # Show the evaluation criteria right before the raw_llm_response_eval
+            st.markdown(f"**Evaluation Criteria:**\n\n{conditions_prompt_text}")
             if isinstance(st.session_state.evaluation_results, dict) and "error" in st.session_state.evaluation_results:
                 st.error(f"Evaluation Error: {st.session_state.evaluation_results.get('error', 'Could not generate evaluation.')}")
-                if "raw_llm_response_eval" in st.session_state.evaluation_results: # Note: changed from raw_response to raw_llm_response_eval
+                if "raw_llm_response_eval" in st.session_state.evaluation_results:
                     st.text_area("Problematic Raw Response (if available)", st.session_state.evaluation_results["raw_llm_response_eval"], height=150)
             elif isinstance(st.session_state.evaluation_results, dict):
-                # This will display the JSON directly, which is what the new evaluate_startup returns
                 st.json(st.session_state.evaluation_results)
             else:
                 st.error("Evaluation results are in an unexpected format.")
@@ -322,9 +327,11 @@ with tab1:
 
 with tab2:
     st.header(" 💬  Chat with General Knowledge Base")
-    # Reference the chat_engine from session state
+    rag_status_container = st.container()
+    load_or_init_chat_engine_dynamic(rag_status_container)
+
     if not st.session_state.chat_engine:
-        st.warning("Chat engine is not available. Please check configurations and persisted index path.")
+        rag_status_container.warning("Chat engine is not available. Please check configurations and persisted index path.")
     else:
         for msg in st.session_state.history:
             st.chat_message(msg["role"]).write(msg["content"])
@@ -339,5 +346,5 @@ with tab2:
                     st.chat_message("assistant").write(assistant_text)
                     st.session_state.history.append({"role": "assistant", "content": assistant_text})
                 except Exception as e_chat:
-                    st.error(f"Error during chat: {e_chat}")
+                    rag_status_container.error(f"Error during chat: {e_chat}")
                     st.session_state.history.append({"role": "assistant", "content": f"Sorry, I encountered an error: {e_chat}"})
