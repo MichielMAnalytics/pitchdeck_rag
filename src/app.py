@@ -173,11 +173,160 @@ def describe_slides_app(slides_info: list[dict], openai_mm_llm: OpenAI) -> list[
     progress_bar.empty()  # Remove the progress bar when done
     return slides_info
 
+def delete_pitch_deck(startup_name: str, deck_filename: str):
+    """
+    Deletes a pitch deck and all its associated files, and removes it from the vector database.
+    
+    Args:
+        startup_name: The base name of the startup (without extension)
+        deck_filename: The filename of the PDF file
+    """
+    import shutil
+    
+    with st.spinner(f"Deleting {startup_name} and removing from RAG..."):
+        try:
+            # 1. Delete the PDF file
+            pdf_path = os.path.join(PITCHDECKS_DIR, deck_filename)
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+                st.success(f"✅ Deleted PDF: {deck_filename}")
+            
+            # 2. Delete the slides directory
+            slides_dir = os.path.join(SLIDES_DIR, startup_name)
+            if os.path.exists(slides_dir):
+                shutil.rmtree(slides_dir)
+                st.success(f"✅ Deleted slide images for {startup_name}")
+            
+            # 3. Delete the descriptions JSON file
+            desc_file = os.path.join(DOCS_DIR, f"{startup_name}_descriptions.json")
+            if os.path.exists(desc_file):
+                os.remove(desc_file)
+                st.success(f"✅ Deleted descriptions for {startup_name}")
+            
+            # 3b. Delete the evaluation JSON file if it exists
+            eval_file = os.path.join(DOCS_DIR, f"{startup_name}_evaluation.json")
+            if os.path.exists(eval_file):
+                os.remove(eval_file)
+                st.success(f"✅ Deleted evaluation for {startup_name}")
+            
+            # 4. Remove from vector database
+            if st.session_state.cumulative_vector_index_object:
+                try:
+                    # We need to rebuild the index without the deleted documents
+                    # First, check if we need to rebuild from scratch
+                    existing_docs_json = []
+                    
+                    # Collect all existing document JSONs except the one we're deleting
+                    for json_file in os.listdir(DOCS_DIR):
+                        if json_file.endswith('_descriptions.json'):
+                            json_startup_name = json_file.replace('_descriptions.json', '')
+                            if json_startup_name != startup_name:  # Skip the one we're deleting
+                                json_path = os.path.join(DOCS_DIR, json_file)
+                                with open(json_path, 'r') as f:
+                                    docs_data = json.load(f)
+                                    existing_docs_json.extend(docs_data)
+                    
+                    # Rebuild the index with remaining documents
+                    if existing_docs_json:
+                        # Create new documents from the remaining JSON data
+                        new_documents = []
+                        for doc_data in existing_docs_json:
+                            new_documents.append(
+                                Document(
+                                    text=doc_data["text"],
+                                    doc_id=doc_data["doc_id"],
+                                    metadata=doc_data["metadata"]
+                                )
+                            )
+                        
+                        # Create a new index with the remaining documents
+                        st.session_state.cumulative_vector_index_object = VectorStoreIndex(new_documents)
+                        
+                        # Persist the new index
+                        st.session_state.cumulative_vector_index_object.storage_context.persist(persist_dir=PERSIST_INDEX_DIR)
+                        
+                        # Re-create chat engine with updated index
+                        st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
+                            chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
+                            system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
+                        )
+                        st.success(f"✅ Removed {startup_name} from RAG index and rebuilt with remaining documents")
+                    else:
+                        # No documents left, create empty index
+                        st.session_state.cumulative_vector_index_object = VectorStoreIndex([])
+                        st.session_state.cumulative_vector_index_object.storage_context.persist(persist_dir=PERSIST_INDEX_DIR)
+                        st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
+                            chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
+                            system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
+                        )
+                        st.info("RAG index is now empty (all documents removed)")
+                        
+                except Exception as e:
+                    st.error(f"Error removing from vector database: {e}")
+            else:
+                st.warning("Vector index not initialized - could not remove from RAG")
+                
+            st.success(f"🎉 Successfully deleted {startup_name} and all associated data!")
+            
+        except Exception as e:
+            st.error(f"Error during deletion: {e}")
+            st.error("Some files may not have been deleted. Please check manually.")
+
 # --- Tab Layout ---
 tab1, tab2 = st.tabs(["📤 Upload & Analyze Pitch Deck", "💬 Chat with General Knowledge Base"])
 
 with tab1:
     st.header(" 📤  Upload & Analyze Pitch Deck")
+    
+    # Display already uploaded pitch decks
+    existing_pitchdecks = []
+    if os.path.exists(PITCHDECKS_DIR):
+        existing_pitchdecks = [f for f in os.listdir(PITCHDECKS_DIR) if f.endswith('.pdf')]
+    
+    if existing_pitchdecks:
+        st.subheader(" 📚  Already Uploaded Pitch Decks")
+        # Create a more visually appealing display
+        cols = st.columns(3)  # Create 3 columns for better layout
+        for idx, deck in enumerate(sorted(existing_pitchdecks)):
+            col = cols[idx % 3]
+            with col:
+                # Extract startup name from filename
+                startup_name = os.path.splitext(deck)[0]
+                # Check if descriptions exist for this deck
+                desc_file = os.path.join(DOCS_DIR, f"{startup_name}_descriptions.json")
+                has_descriptions = os.path.exists(desc_file)
+                
+                # Create a card-like display
+                with st.container():
+                    st.markdown(f"**📄 {startup_name}**")
+                    if has_descriptions:
+                        st.caption("✅ Indexed in RAG")
+                    else:
+                        st.caption("⏳ Not yet indexed")
+                    # Get file size
+                    file_size = os.path.getsize(os.path.join(PITCHDECKS_DIR, deck))
+                    st.caption(f"Size: {file_size / 1024:.1f} KB")
+                    
+                    # Add View and Delete buttons
+                    button_col1, button_col2 = st.columns(2)
+                    with button_col1:
+                        if st.button(f"👁️ View", key=f"view_{startup_name}", 
+                                   type="primary", use_container_width=True,
+                                   help=f"View {startup_name} slides"):
+                            # Store in session state and navigate
+                            st.session_state.selected_deck = startup_name
+                            st.switch_page("pages/2_📊_Pitch_Deck_Viewer.py")
+                    
+                    with button_col2:
+                        if st.button(f"🗑️ Delete", key=f"delete_{startup_name}", 
+                                   use_container_width=True,
+                                   help=f"Delete {startup_name} and remove from RAG"):
+                            delete_pitch_deck(startup_name, deck)
+                            st.rerun()
+        st.divider()
+    else:
+        st.info(" 📭  No pitch decks uploaded yet. Upload your first pitch deck below!")
+    
     uploaded_file = st.file_uploader("Select a PDF pitch deck", type="pdf", key="pdf_uploader")
     if uploaded_file:
         # Only process if a new file is uploaded
@@ -245,6 +394,13 @@ with tab1:
                         # Calling the imported evaluate_startup function
                         st.session_state.evaluation_results = evaluate_startup(all_descriptions, uploaded_file.name, OPENAI_API_KEY)
                         st.session_state.current_conditions_prompt_display = None # Clear this as the new evaluation is dynamic
+                        
+                        # Save evaluation results to file for persistence
+                        if st.session_state.evaluation_results and isinstance(st.session_state.evaluation_results, dict):
+                            eval_filename = f"{base_file_name}_evaluation.json"
+                            eval_path = os.path.join(DOCS_DIR, eval_filename)
+                            with open(eval_path, 'w') as f:
+                                json.dump(st.session_state.evaluation_results, f, indent=4)
 
                 # --- ADDED: Make the index cumulative (moved outside SHOW_LLM_EVALUATION check) ---
                 if st.session_state.cumulative_vector_index_object:
@@ -288,28 +444,15 @@ with tab1:
                         st.warning("No valid documents generated from this pitch deck to add to the RAG index.")
                 else:
                     st.warning("Cumulative index object is not initialized. Cannot add new documents to RAG.")
-        # Display results (unchanged in logic, but now expects the new JSON structure)
+        # Display a message about the newly uploaded deck with a button to view it
         if st.session_state.slides_info:
-            st.subheader(" 📄  Slide Previews & Descriptions")
             startup_name = st.session_state.slides_info[0].get("base_name", "Startup")
-            slide_options = [
-                f"Slide {info['page']}" for info in st.session_state.slides_info if info["path"] and not info.get("error")
-            ]
-            if slide_options:
-                selected_slide = st.selectbox(
-                    f"Select a slide from {startup_name} to preview and see its description:",
-                    slide_options,
-                    key="slide_selectbox"
-                )
-                selected_index = slide_options.index(selected_slide)
-                info = [s for s in st.session_state.slides_info if s["path"] and not s.get("error")][selected_index]
-                with st.expander(f"{startup_name} - {selected_slide}", expanded=True):
-                    st.image(info["path"], width="stretch", caption=selected_slide)
-                    st.markdown(f"**Description:**\n\n{info['desc']}")
-            else:
-                st.warning("No valid slides to display.")
+            st.success(f"✅ Successfully processed {startup_name}!")
+            if st.button(f"👁️ View {startup_name} Slides", type="primary", key="view_new_deck"):
+                st.session_state.selected_deck = startup_name
+                st.switch_page("pages/2_📊_Pitch_Deck_Viewer.py")
 
-        # Move the evaluation section here, after the slides
+        # Display evaluation section
         if SHOW_LLM_EVALUATION and st.session_state.evaluation_results:
             st.subheader(" 📊  Startup Evaluation Results by LLM")
             results = st.session_state.evaluation_results
