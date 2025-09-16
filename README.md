@@ -78,3 +78,4 @@ The application expects certain directory structures for data storage and persis
 * **Scalability**: While the cumulative indexing (using `insert()`) is efficient for adding documents, extremely large datasets might eventually benefit from dedicated vector databases (e.g., Pinecone, Weaviate, Chroma) which LlamaIndex can integrate with. For hundreds or thousands of pitch decks, the local file-based persistence might still work well.
 * **Error Handling**: The application includes basic error handling, but more robust logging and user feedback mechanisms could be added for production readiness.
 * **Resource Usage**: Processing PDFs and generating descriptions can be memory and CPU intensive, especially for large pitch decks or many concurrent users.
+# pitchdeck_rag
