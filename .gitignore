@@ -18,3 +18,6 @@ venv/
 
 # DS structure
 .DS_Store
+
+
+data/

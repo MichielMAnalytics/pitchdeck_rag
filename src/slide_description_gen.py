@@ -1,25 +1,45 @@
 import os
-from llama_index.multi_modal_llms.openai import OpenAIMultiModal
-from llama_index.core import Document
-from llama_index.core.schema import ImageDocument 
+import base64
+import openai
+from llama_index.llms.openai import OpenAI
+from llama_index.core import Document 
 
-def describe_image(image_path: str, openai_mm_llm: OpenAIMultiModal) -> str:
+def describe_image(image_path: str, openai_mm_llm: OpenAI) -> str:
     """
-    Generates a description for a single image using a multimodal LLM.
+    Generates a description for a single image using OpenAI with vision capabilities.
     """
     if not os.path.exists(image_path):
         raise FileNotFoundError(f"Image file not found: {image_path}")
-    # Load image document correctly for multimodal LLM
-    # Pass the image path directly to ImageDocument
-    image_documents = [ImageDocument(image_path=image_path)]
-    # Define the query
-    query = "This image is part of a slidedeck, describe the relevant content for analysis of the presentation. Please respond in full sentences and without empty lines."
-    # Get the response
-    response = openai_mm_llm.complete(
-        prompt=query,
-        image_documents=image_documents,
+    
+    # Read and encode the image
+    with open(image_path, "rb") as image_file:
+        image_data = base64.b64encode(image_file.read()).decode('utf-8')
+    
+    # Use the OpenAI client directly with proper message format
+    client = openai.OpenAI(api_key=openai_mm_llm.api_key)
+    
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": "This image is part of a slidedeck, describe the relevant content for analysis of the presentation. Please respond in full sentences and without empty lines."
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/png;base64,{image_data}"
+                        }
+                    }
+                ]
+            }
+        ]
     )
-    return response.text
+    
+    return response.choices[0].message.content
 
 def describe_slides_in_folder(image_directory: str, openai_api_key: str) -> list[Document]:
     """
@@ -27,8 +47,8 @@ def describe_slides_in_folder(image_directory: str, openai_api_key: str) -> list
     and returns them as a list of LlamaIndex Document objects.
     """
     os.environ["OPENAI_API_KEY"] = openai_api_key # Ensure API key is set for this context
-    openai_mm_llm = OpenAIMultiModal(
-        model="gpt-4o",
+    openai_mm_llm = OpenAI(
+        model="gpt-4o-mini",
         api_key=openai_api_key
     )
     if not os.path.isdir(image_directory):

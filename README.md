@@ -2,6 +2,10 @@
 
 A Streamlit application to analyze VC pitch decks, generate slide descriptions, and perform automated startup evaluation using a Retrieval Augmented Generation (RAG) based chat.
 
+## 🙌 Acknowledgments
+
+**Huge shoutout to [cosmincbodea](https://github.com/cosmincbodea) for the original amazing work on [vc-pitchdecks-analyzer](https://github.com/cosmincbodea/vc-pitchdecks-analyzer.git)!** This project builds upon their excellent foundation for VC pitch deck analysis and RAG-based chat functionality.
+
 ---
 ## 🚀 Getting Started
 
@@ -12,8 +16,8 @@ A Streamlit application to analyze VC pitch decks, generate slide descriptions, 
 ### 📦 Installation
 1.  **Clone the repository:**
     ```bash
-    git clone https://github.com/cosmincbodea/vc-pitchdecks-analyzer.git
-    cd vc-pitchdecks-analyzer
+    git clone https://github.com/MichielMAnalytics/pitchdeck_rag.git
+    cd pitchdeck_rag
     ```
 2.  **Create a virtual environment (recommended):**
     ```bash
@@ -25,7 +29,7 @@ A Streamlit application to analyze VC pitch decks, generate slide descriptions, 
     pip install -r requirements.txt
     ```
 4.  **Set up your OpenAI API Key:**
-    * Create a folder named `.streamlit` in the root of your project (`vc-pitchdecks-analyzer/.streamlit/`).
+    * Create a folder named `.streamlit` in the root of your project (`pitchdeck_rag/.streamlit/`).
     * Inside this folder, create a file named `secrets.toml`. Add your API key like this:
         ```toml
         # .streamlit/secrets.toml
@@ -43,7 +47,7 @@ The application expects certain directory structures for data storage and persis
 
 ## 🏃 How to Run the Application
 1.  **Ensure your virtual environment is active.**
-2.  **Navigate to the root of your project (`vc-pitchdecks-analyzer`).**
+2.  **Navigate to the root of your project (`pitchdeck_rag`).**
 3.  **Run the Streamlit application:**
     ```bash
     streamlit run src/app.py

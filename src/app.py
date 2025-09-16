@@ -5,7 +5,7 @@ import fitz
 from llama_index.core import StorageContext, load_index_from_storage, SimpleDirectoryReader, Document, VectorStoreIndex
 from llama_index.llms.openai import OpenAI as LI_OpenAI
 from llama_index.core.memory import ChatMemoryBuffer
-from llama_index.multi_modal_llms.openai import OpenAIMultiModal
+from llama_index.llms.openai import OpenAI
 import tempfile
 import json
 import re
@@ -30,12 +30,15 @@ except KeyError:
 os.environ["OPENAI_API_KEY"] = OPENAI_API_KEY
 openai.api_key = OPENAI_API_KEY
 
+# --- Feature Toggle Settings ---
+SHOW_LLM_EVALUATION = st.secrets.get("SHOW_LLM_EVALUATION", True)  # Default to True if not set
+
 # --- Streamlit Config ---
 st.set_page_config(page_title="RAG Chat for VC Pitch decks", page_icon=" 💼 ", layout="wide")
 st.title(" 💼  RAG Chat & Evaluation for VC Pitch decks")
 
 # --- Constants ---
-MODEL_NAME = "gpt-4o"
+MODEL_NAME = "gpt-4o-mini"
 SYSTEM_PROMPT_CHAT = (
     "You are a helpful assistant for the investment team of a venture capital fund called UVC Partners. "
     "Answer with the most amount of information you can find in the provided context."
@@ -60,8 +63,8 @@ def get_chat_memory_buffer():
 
 @st.cache_resource
 def get_openai_multimodal_llm():
-    """Caches and returns an OpenAIMultiModal LLM instance."""
-    return OpenAIMultiModal(model=MODEL_NAME, api_key=os.environ["OPENAI_API_KEY"])
+    """Caches and returns an OpenAI LLM instance with vision capabilities."""
+    return OpenAI(model=MODEL_NAME, api_key=os.environ["OPENAI_API_KEY"])
 
 memory = get_chat_memory_buffer()
 openai_mm_llm = get_openai_multimodal_llm()
@@ -148,7 +151,7 @@ def process_pdf_to_images_app(pdf_path: str, slides_dir: str, base_name: str) ->
     pdf_doc.close()
     return current_slides_info
 
-def describe_slides_app(slides_info: list[dict], openai_mm_llm: OpenAIMultiModal) -> list[dict]:
+def describe_slides_app(slides_info: list[dict], openai_mm_llm: OpenAI) -> list[dict]:
     """
     Generates descriptions for each slide image within the Streamlit context using a multimodal LLM.
     Updates the 'slides_info' list with the generated descriptions.
@@ -236,55 +239,55 @@ with tab1:
                 ])
                 if not all_descriptions.strip():
                     st.warning("No valid slide descriptions available to perform startup evaluation.")
-                else:
+                elif SHOW_LLM_EVALUATION:
                     st.subheader(" ⚙️  Performing Startup Evaluation...")
                     with st.spinner("Evaluating conditions based on slide descriptions..."):
                         # Calling the imported evaluate_startup function
                         st.session_state.evaluation_results = evaluate_startup(all_descriptions, uploaded_file.name, OPENAI_API_KEY)
                         st.session_state.current_conditions_prompt_display = None # Clear this as the new evaluation is dynamic
 
-                    # --- ADDED: Make the index cumulative ---
-                    if st.session_state.cumulative_vector_index_object:
-                        # st.info("Adding new slide descriptions to the RAG knowledge base...")
-                        new_documents_for_rag = []
-                        for info in st.session_state.slides_info:
-                            if not info.get("error") and info.get("desc"):
-                                # Create a LlamaIndex Document for each slide description
-                                # Ensure doc_id is unique across all pitch decks and slides
-                                doc_id = f"{base_file_name}_slide_{info['page']}"
-                                new_documents_for_rag.append(
-                                    Document(
-                                        text=info["desc"],
-                                        doc_id=doc_id, # Unique ID for each slide
-                                        metadata={
-                                            "startup_name": base_file_name, # Original file name as startup name
-                                            "page_number": info['page'],
-                                            "source_file": uploaded_file.name # Original PDF filename
-                                        }
-                                    )
+                # --- ADDED: Make the index cumulative (moved outside SHOW_LLM_EVALUATION check) ---
+                if st.session_state.cumulative_vector_index_object:
+                    # st.info("Adding new slide descriptions to the RAG knowledge base...")
+                    new_documents_for_rag = []
+                    for info in st.session_state.slides_info:
+                        if not info.get("error") and info.get("desc"):
+                            # Create a LlamaIndex Document for each slide description
+                            # Ensure doc_id is unique across all pitch decks and slides
+                            doc_id = f"{base_file_name}_slide_{info['page']}"
+                            new_documents_for_rag.append(
+                                Document(
+                                    text=info["desc"],
+                                    doc_id=doc_id, # Unique ID for each slide
+                                    metadata={
+                                        "startup_name": base_file_name, # Original file name as startup name
+                                        "page_number": info['page'],
+                                        "source_file": uploaded_file.name # Original PDF filename
+                                    }
                                 )
-                        if new_documents_for_rag:
-                            with st.spinner("Updating RAG index with new pitch deck data..."):
-                                try:
-                                    for doc_to_insert in new_documents_for_rag:
-                                        # LlamaIndex's insert method adds new documents incrementally
-                                        st.session_state.cumulative_vector_index_object.insert(doc_to_insert)
-                                    
-                                    # Persist the updated index to disk
-                                    st.session_state.cumulative_vector_index_object.storage_context.persist(persist_dir=PERSIST_INDEX_DIR)
-                                    st.success(f"Successfully added {len(new_documents_for_rag)} new slide descriptions to the RAG knowledge base and persisted the index.")
-                                    
-                                    # Re-create chat engine with the updated index object to ensure it reflects changes
-                                    st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
-                                        chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
-                                        system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
-                                    )
-                                except Exception as e_insert_persist:
-                                    st.error(f"Failed to update or persist the cumulative index: {e_insert_persist}")
-                        else:
-                            st.warning("No valid documents generated from this pitch deck to add to the RAG index.")
+                            )
+                    if new_documents_for_rag:
+                        with st.spinner("Updating RAG index with new pitch deck data..."):
+                            try:
+                                for doc_to_insert in new_documents_for_rag:
+                                    # LlamaIndex's insert method adds new documents incrementally
+                                    st.session_state.cumulative_vector_index_object.insert(doc_to_insert)
+                                
+                                # Persist the updated index to disk
+                                st.session_state.cumulative_vector_index_object.storage_context.persist(persist_dir=PERSIST_INDEX_DIR)
+                                st.success(f"Successfully added {len(new_documents_for_rag)} new slide descriptions to the RAG knowledge base and persisted the index.")
+                                
+                                # Re-create chat engine with the updated index object to ensure it reflects changes
+                                st.session_state.chat_engine = st.session_state.cumulative_vector_index_object.as_chat_engine(
+                                    chat_mode="context", memory=memory, llm=LI_OpenAI(temperature=0, model=MODEL_NAME),
+                                    system_prompt=SYSTEM_PROMPT_CHAT, verbose=True, similarity_top_k=20,
+                                )
+                            except Exception as e_insert_persist:
+                                st.error(f"Failed to update or persist the cumulative index: {e_insert_persist}")
                     else:
-                        st.warning("Cumulative index object is not initialized. Cannot add new documents to RAG.")
+                        st.warning("No valid documents generated from this pitch deck to add to the RAG index.")
+                else:
+                    st.warning("Cumulative index object is not initialized. Cannot add new documents to RAG.")
         # Display results (unchanged in logic, but now expects the new JSON structure)
         if st.session_state.slides_info:
             st.subheader(" 📄  Slide Previews & Descriptions")
@@ -301,13 +304,13 @@ with tab1:
                 selected_index = slide_options.index(selected_slide)
                 info = [s for s in st.session_state.slides_info if s["path"] and not s.get("error")][selected_index]
                 with st.expander(f"{startup_name} - {selected_slide}", expanded=True):
-                    st.image(info["path"], use_container_width=True, caption=selected_slide)
+                    st.image(info["path"], width="stretch", caption=selected_slide)
                     st.markdown(f"**Description:**\n\n{info['desc']}")
             else:
                 st.warning("No valid slides to display.")
 
         # Move the evaluation section here, after the slides
-        if st.session_state.evaluation_results:
+        if SHOW_LLM_EVALUATION and st.session_state.evaluation_results:
             st.subheader(" 📊  Startup Evaluation Results by LLM")
             results = st.session_state.evaluation_results
             # Define the criteria and their corresponding keys
