@@ -1,7 +1,6 @@
 import streamlit as st
 import os
 import openai
-import fitz
 from llama_index.core import StorageContext, load_index_from_storage, SimpleDirectoryReader, Document, VectorStoreIndex
 from llama_index.llms.openai import OpenAI as LI_OpenAI
 from llama_index.core.memory import ChatMemoryBuffer
@@ -181,25 +180,23 @@ def process_pdf_to_images_app(pdf_path: str, slides_dir: str, base_name: str) ->
     Converts a PDF to a series of images and saves them to the specified directory.
     Returns a list of dictionaries with 'path' and 'page' info for each slide.
     """
-    os.makedirs(slides_dir, exist_ok=True)
-    pdf_doc = fitz.open(pdf_path)
-    current_slides_info = []
-    if not pdf_doc.page_count:
-        st.warning("The uploaded PDF has no pages.")
+    try:
+        # Use the updated pdf_to_images function from pitchdeck_splitter
+        image_paths = pdf_to_images(pdf_path, slides_dir, base_name)
+        current_slides_info = []
+        
+        if not image_paths:
+            st.warning("The uploaded PDF has no pages.")
+            return []
+            
+        for i, image_path in enumerate(image_paths):
+            current_slides_info.append({"path": image_path, "page": i + 1, "base_name": base_name})
+            
+        return current_slides_info
+        
+    except Exception as e:
+        st.error(f"Error processing PDF: {e}")
         return []
-    for i in range(len(pdf_doc)):
-        try:
-            pix = pdf_doc.load_page(i).get_pixmap()
-            # Ensure consistent naming for slides, especially for doc_id later
-            slide_name_suffix = f"_slide_{i + 1:02d}.png" # e.g., _slide_01.png, _slide_10.png
-            slide_path = os.path.join(slides_dir, f"{base_name}{slide_name_suffix}")
-            pix.save(slide_path)
-            current_slides_info.append({"path": slide_path, "page": i + 1, "base_name": base_name})
-        except Exception as e_slide:
-            st.error(f"Error processing slide {i+1}: {e_slide}")
-            current_slides_info.append({"path": None, "desc": f"Error generating image for slide {i+1}.", "page": i+1, "error": True, "base_name": base_name})
-    pdf_doc.close()
-    return current_slides_info
 
 def describe_slides_app(slides_info: list[dict], openai_mm_llm: OpenAI) -> list[dict]:
     """
