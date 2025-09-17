@@ -6,12 +6,53 @@ from llama_index.core import StorageContext, load_index_from_storage
 from llama_index.llms.openai import OpenAI as LI_OpenAI
 from llama_index.core.memory import ChatMemoryBuffer
 
-# Set page config
+# Initialize sidebar visibility state
+if 'show_sidebar' not in st.session_state:
+    st.session_state.show_sidebar = False
+
+# Set page config with sidebar always expanded
 st.set_page_config(
     page_title="Pitch Deck Viewer",
     page_icon="📊",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
+
+# Toggle sidebar visibility function
+def toggle_sidebar():
+    st.session_state.show_sidebar = not st.session_state.show_sidebar
+
+
+# CSS to control sidebar visibility and hide navigation
+sidebar_display = "block" if st.session_state.show_sidebar else "none"
+st.markdown(f"""
+<style>
+    /* Conditionally hide/show the sidebar */
+    section[data-testid="stSidebar"][aria-expanded="true"] {{
+        display: {sidebar_display} !important;
+    }}
+    
+    /* Hide only the multipage navigation widget */
+    [data-testid="stSidebarNav"] {{
+        display: none !important;
+    }}
+    
+    /* Hide the specific navigation list but preserve other elements */
+    .css-1544g2n ul {{
+        display: none !important;
+    }}
+    
+    /* Keep the collapse button visible when sidebar is hidden */
+    [data-testid="collapsedControl"] {{
+        display: block !important;
+    }}
+    
+    /* Keep sidebar header controls visible */
+    section[data-testid="stSidebar"] > div > div:first-child {{
+        display: block !important;
+    }}
+</style>
+""", unsafe_allow_html=True)
 
 # Define data directories (same as in main app)
 DATA_DIR = "./data"
@@ -135,121 +176,187 @@ if chat_history_key not in st.session_state:
 # Load chat engine
 deck_chat_engine = load_deck_chat_engine(deck_name)
 
-# Create main layout
-main_col, sidebar_col = st.columns([3, 1])
+# Use full width for main content
+# Slide navigation controls
+nav_col1, nav_col2, nav_col3 = st.columns([1, 3, 1])
+    
+with nav_col1:
+    if st.button("← Previous", width="stretch", 
+                disabled=(st.session_state.current_slide == 0)):
+        st.session_state.current_slide -= 1
+        st.rerun()
 
-with main_col:
-    # Slide navigation controls
-    nav_col1, nav_col2, nav_col3 = st.columns([1, 3, 1])
+with nav_col2:
+    # Slide selector
+    selected_slide = st.selectbox(
+        "Select slide:",
+        options=list(range(len(slide_images))),
+        index=st.session_state.current_slide,
+        format_func=lambda x: f"Slide {x + 1} of {len(slide_images)}",
+        label_visibility="collapsed"
+    )
+    if selected_slide != st.session_state.current_slide:
+        st.session_state.current_slide = selected_slide
+        st.rerun()
+
+with nav_col3:
+    if st.button("Next →", width="stretch",
+                disabled=(st.session_state.current_slide == len(slide_images) - 1)):
+        st.session_state.current_slide += 1
+        st.rerun()
+
+# Display current slide
+st.image(slide_images[st.session_state.current_slide], 
+         width="stretch",
+         caption=f"Slide {st.session_state.current_slide + 1} of {len(slide_images)}")
+
+# Display slide description if available
+current_page_num = st.session_state.current_slide + 1
+if current_page_num in descriptions:
+    with st.expander("📝 Slide Description", expanded=True):
+        st.markdown(descriptions[current_page_num])
     
-    with nav_col1:
-        if st.button("← Previous", width="stretch", 
-                    disabled=(st.session_state.current_slide == 0)):
-            st.session_state.current_slide -= 1
+
+# Initialize chat panel state
+if "show_assistant" not in st.session_state:
+    st.session_state.show_assistant = False
+
+# Add toggle button for sidebar
+if deck_chat_engine:
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        sidebar_text = "Close Chat Assistant" if st.session_state.show_sidebar else "Open Chat Assistant"
+        if st.button(f"💬 {sidebar_text}", key="toggle_sidebar_btn", use_container_width=True):
+            toggle_sidebar()
             st.rerun()
-    
-    with nav_col2:
-        # Slide selector
-        selected_slide = st.selectbox(
-            "Select slide:",
-            options=list(range(len(slide_images))),
-            index=st.session_state.current_slide,
-            format_func=lambda x: f"Slide {x + 1} of {len(slide_images)}",
-            label_visibility="collapsed"
-        )
-        if selected_slide != st.session_state.current_slide:
-            st.session_state.current_slide = selected_slide
-            st.rerun()
-    
-    with nav_col3:
-        if st.button("Next →", width="stretch",
-                    disabled=(st.session_state.current_slide == len(slide_images) - 1)):
-            st.session_state.current_slide += 1
-            st.rerun()
-    
-    # Display current slide
-    st.image(slide_images[st.session_state.current_slide], 
-             width="stretch",
-             caption=f"Slide {st.session_state.current_slide + 1} of {len(slide_images)}")
-    
-    # Display slide description if available
-    current_page_num = st.session_state.current_slide + 1
-    if current_page_num in descriptions:
-        with st.expander("📝 Slide Description", expanded=True):
-            st.markdown(descriptions[current_page_num])
-    
-    # Add chat interface
-    st.divider()
-    st.subheader("💬 Chat about this Pitch Deck")
-    
-    if deck_chat_engine:
-        # Display chat history
-        for msg in st.session_state[chat_history_key]:
-            st.chat_message(msg["role"]).write(msg["content"])
+else:
+    st.error("💡 Chat functionality not available for this deck. The vector index may need to be rebuilt.")
+
+# Assistant sidebar - always render content (visibility controlled by CSS)
+if deck_chat_engine:
+    with st.sidebar:
+        # Modern assistant styling
+        st.markdown("""
+        <style>
+        /* Sidebar styling */
+        .stSidebar {
+            background-color: #1e1e1e !important;
+        }
         
-        # Chat input
-        user_input = st.chat_input(f"Ask questions about {deck_name}...")
+        /* Chat message styling */
+        .stChatMessage {
+            background: transparent !important;
+            border: none !important;
+            padding: 8px 0 !important;
+        }
         
-        if user_input:
-            # Add user message to chat history
-            st.session_state[chat_history_key].append({"role": "user", "content": user_input})
-            st.chat_message("user").write(user_input)
+        /* User message styling */
+        .stChatMessage[data-testid="user"] {
+            flex-direction: row-reverse !important;
+        }
+        
+        .stChatMessage[data-testid="user"] .stChatMessageContent {
+            background: #2563eb !important;
+            color: white !important;
+            border-radius: 18px 18px 4px 18px !important;
+            padding: 12px 16px !important;
+            margin-left: 40px !important;
+            margin-right: 0 !important;
+        }
+        
+        /* Assistant message styling */
+        .stChatMessage[data-testid="assistant"] .stChatMessageContent {
+            background: #374151 !important;
+            color: #f3f4f6 !important;
+            border-radius: 18px 18px 18px 4px !important;
+            padding: 12px 16px !important;
+            margin-right: 40px !important;
+            margin-left: 0 !important;
+        }
+        
+        /* Hide chat avatars */
+        .stChatMessage img {
+            display: none !important;
+        }
+        
+        /* Chat input styling */
+        .stChatInput > div {
+            background: #374151 !important;
+            border: 1px solid #4b5563 !important;
+            border-radius: 24px !important;
+        }
+        
+        .stChatInput input {
+            background: transparent !important;
+            color: white !important;
+            border: none !important;
+        }
+        
+        .stChatInput input::placeholder {
+            color: #9ca3af !important;
+        }
+        
+        /* Button styling */
+        .stButton > button {
+            background: #374151 !important;
+            color: white !important;
+            border: 1px solid #4b5563 !important;
+            border-radius: 8px !important;
+            font-weight: 500 !important;
+        }
+        
+        .stButton > button:hover {
+            background: #4b5563 !important;
+            border-color: #6b7280 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        # Assistant header with modern styling
+        st.markdown("""
+        <div style="display: flex; align-items: center; padding: 16px 0 8px 0; border-bottom: 1px solid #374151;">
+            <div style="color: #f3f4f6; font-size: 18px; font-weight: 600; display: flex; align-items: center;">
+                ✨ Assistant
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Add close button with modern styling
+        if st.button("✕ Close", key="close_sidebar_btn", use_container_width=True, help="Close Assistant"):
+            toggle_sidebar()
+            st.rerun()
+        
+        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+        
+        # Chat container with modern styling
+        chat_container = st.container(height=420)
+        with chat_container:
+            # Display chat history with improved styling
+            for i, msg in enumerate(st.session_state[chat_history_key]):
+                if msg["role"] == "user":
+                    st.chat_message("user", avatar="💭").write(msg["content"])
+                else:
+                    st.chat_message("assistant", avatar="🤖").write(msg["content"])
+        
+        # Chat input with modern styling
+        has_messages = len(st.session_state[chat_history_key]) > 0
+        placeholder = "Continue the conversation..." if has_messages else f"Ask about {deck_name}..."
+        
+        if sidebar_prompt := st.chat_input(placeholder, key="sidebar_chat_input"):
+            # Add user message to history
+            st.session_state[chat_history_key].append({"role": "user", "content": sidebar_prompt})
             
-            # Generate AI response
-            with st.spinner("Thinking..."):
+            # Generate AI response with modern spinner
+            with st.spinner("🤖 Thinking..."):
                 try:
-                    response = deck_chat_engine.chat(user_input)
+                    response = deck_chat_engine.chat(sidebar_prompt)
                     assistant_text = response.response
                     
-                    # Add AI response to chat history
+                    # Add AI response to history
                     st.session_state[chat_history_key].append({"role": "assistant", "content": assistant_text})
-                    st.chat_message("assistant").write(assistant_text)
                     
                 except Exception as e_chat:
                     error_msg = f"Sorry, I encountered an error: {e_chat}"
                     st.session_state[chat_history_key].append({"role": "assistant", "content": error_msg})
-                    st.chat_message("assistant").write(error_msg)
-                    st.error(f"Chat error: {e_chat}")
-    else:
-        st.info(f"💡 Chat functionality not available for {deck_name}. The vector index may need to be rebuilt.")
-        st.caption("Upload the pitch deck again to enable chat functionality.")
-
-with sidebar_col:
-    st.caption("Click to jump to a slide")
-    
-    # Create a scrollable container for thumbnails
-    for idx, slide_path in enumerate(slide_images):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            if st.button(f"Slide {idx + 1}", 
-                        key=f"thumb_{idx}",
-                        width="stretch",
-                        type="primary" if idx == st.session_state.current_slide else "secondary"):
-                st.session_state.current_slide = idx
-                st.rerun()
-        with col2:
-            if idx == st.session_state.current_slide:
-                st.markdown("**→**")
-    
-    # Display deck information
-    st.divider()
-    st.subheader("ℹ️ Deck Information")
-    st.markdown(f"**Total Slides:** {len(slide_images)}")
-    st.markdown(f"**Descriptions Available:** {'Yes ✅' if descriptions else 'No ❌'}")
-    
-    # Load and display evaluation results if they exist for this deck
-    # Check if there's a stored evaluation for this specific deck
-    eval_file = os.path.join(DOCS_DIR, f"{deck_name}_evaluation.json")
-    if os.path.exists(eval_file):
-        st.divider()
-        st.subheader("📊 Evaluation Summary")
-        try:
-            with open(eval_file, 'r') as f:
-                results = json.load(f)
-            if isinstance(results, dict):
-                st.markdown(f"**Startup:** {results.get('startup_name', deck_name)}")
-                st.markdown(f"**Category:** {results.get('category', 'N/A')}")
-                st.markdown(f"**Region:** {results.get('region', 'N/A')}")
-                st.markdown(f"**Funding Round:** {results.get('funding_round', 'N/A')}")
-        except Exception as e:
-            st.error(f"Could not load evaluation: {e}")
+            
+            st.rerun()

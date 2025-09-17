@@ -35,6 +35,37 @@ SHOW_LLM_EVALUATION = st.secrets.get("SHOW_LLM_EVALUATION", True)  # Default to 
 
 # --- Streamlit Config ---
 st.set_page_config(page_title="RAG Chat for VC Pitch decks", page_icon=" 💼 ", layout="wide")
+
+# Always hide sidebar on main page and hide navigation
+st.markdown("""
+<style>
+    /* Always hide the sidebar on main page */
+    section[data-testid="stSidebar"][aria-expanded="true"] {
+        display: none !important;
+    }
+    
+    /* Hide only the multipage navigation widget */
+    [data-testid="stSidebarNav"] {
+        display: none !important;
+    }
+    
+    /* Hide the specific navigation list but preserve other elements */
+    .css-1544g2n ul {
+        display: none !important;
+    }
+    
+    /* Keep the collapse button visible */
+    [data-testid="collapsedControl"] {
+        display: block !important;
+    }
+    
+    /* Keep sidebar header controls visible */
+    section[data-testid="stSidebar"] > div > div:first-child {
+        display: block !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title(" 💼  RAG Chat & Evaluation for VC Pitch decks")
 
 # --- Constants ---
