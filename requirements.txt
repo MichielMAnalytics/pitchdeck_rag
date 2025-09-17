@@ -59,8 +59,7 @@ pyarrow==21.0.0
 pydantic==2.11.9
 pydantic_core==2.33.2
 pydeck==0.9.1
-PyMuPDF==1.23.25
-PyMuPDFb==1.23.22
+PyMuPDF==1.23.22
 python-dateutil==2.9.0.post0
 pytz==2025.2
 PyYAML==6.0.2

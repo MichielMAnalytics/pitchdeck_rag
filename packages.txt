@@ -1,0 +1,4 @@
+libfreetype6-dev
+libfontconfig1-dev
+libjpeg-dev
+libopenjp2-7-dev
