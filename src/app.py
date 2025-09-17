@@ -312,8 +312,8 @@ if existing_pitchdecks:
                 file_size = os.path.getsize(os.path.join(PITCHDECKS_DIR, deck))
                 st.caption(f"Size: {file_size / 1024:.1f} KB")
                 
-                # Add View and Delete buttons
-                button_col1, button_col2 = st.columns(2)
+                # Add View, Copy URL, and Delete buttons
+                button_col1, button_col2, button_col3 = st.columns(3)
                 with button_col1:
                     if st.button(f"👁️ View", key=f"view_{startup_name}", 
                                type="primary", width="stretch",
@@ -323,6 +323,19 @@ if existing_pitchdecks:
                         st.switch_page("pages/2_📊_Pitch_Deck_Viewer.py")
                 
                 with button_col2:
+                    # Copy URL button
+                    viewer_url = f"{st.get_option('server.baseUrlPath') or ''}/2_📊_Pitch_Deck_Viewer?deck={startup_name}"
+                    if st.button(f"🔗 Copy", key=f"copy_{startup_name}", 
+                               width="stretch",
+                               help=f"Copy URL to {startup_name} viewer"):
+                        # Add JavaScript to copy to clipboard
+                        st.markdown(f"""
+                        <script>
+                        navigator.clipboard.writeText(window.location.origin + '{viewer_url}');
+                        </script>
+                        """, unsafe_allow_html=True)
+                
+                with button_col3:
                     if st.button(f"🗑️ Delete", key=f"delete_{startup_name}", 
                                width="stretch",
                                help=f"Delete {startup_name} and remove from RAG"):

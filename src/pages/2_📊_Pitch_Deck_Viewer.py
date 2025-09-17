@@ -177,16 +177,23 @@ if chat_history_key not in st.session_state:
 deck_chat_engine = load_deck_chat_engine(deck_name)
 
 # Use full width for main content
-# Slide navigation controls
-nav_col1, nav_col2, nav_col3 = st.columns([1, 3, 1])
-    
+# Slide navigation controls with chat toggle
+nav_col1, nav_col2, nav_col3, nav_col4 = st.columns([1, 1, 2, 1])
+
 with nav_col1:
+    # Chat toggle button all the way to the left
+    if deck_chat_engine:
+        if st.button("✨ Assistant", key="nav_toggle_btn", width="stretch"):
+            toggle_sidebar()
+            st.rerun()
+    
+with nav_col2:
     if st.button("← Previous", width="stretch", 
                 disabled=(st.session_state.current_slide == 0)):
         st.session_state.current_slide -= 1
         st.rerun()
 
-with nav_col2:
+with nav_col3:
     # Slide selector
     selected_slide = st.selectbox(
         "Select slide:",
@@ -199,7 +206,7 @@ with nav_col2:
         st.session_state.current_slide = selected_slide
         st.rerun()
 
-with nav_col3:
+with nav_col4:
     if st.button("Next →", width="stretch",
                 disabled=(st.session_state.current_slide == len(slide_images) - 1)):
         st.session_state.current_slide += 1
@@ -221,15 +228,8 @@ if current_page_num in descriptions:
 if "show_assistant" not in st.session_state:
     st.session_state.show_assistant = False
 
-# Add toggle button for sidebar
-if deck_chat_engine:
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        sidebar_text = "Close Chat Assistant" if st.session_state.show_sidebar else "Open Chat Assistant"
-        if st.button(f"💬 {sidebar_text}", key="toggle_sidebar_btn", use_container_width=True):
-            toggle_sidebar()
-            st.rerun()
-else:
+# Error message if chat engine not available
+if not deck_chat_engine:
     st.error("💡 Chat functionality not available for this deck. The vector index may need to be rebuilt.")
 
 # Assistant sidebar - always render content (visibility controlled by CSS)
@@ -279,20 +279,51 @@ if deck_chat_engine:
             display: none !important;
         }
         
-        /* Chat input styling */
-        .stChatInput > div {
-            background: #374151 !important;
-            border: 1px solid #4b5563 !important;
-            border-radius: 24px !important;
+        /* Position assistant header at absolute top right of sidebar */
+        .assistant-header {
+            position: absolute !important;
+            top: 16px !important;
+            right: 16px !important;
+            background: transparent !important;
+            z-index: 1002 !important;
+            padding: 0 !important;
         }
         
-        .stChatInput input {
+        /* Make sure sidebar has relative positioning for absolute children */
+        section[data-testid="stSidebar"] {
+            position: relative !important;
+        }
+        
+        /* Make sidebar content take full height */
+        section[data-testid="stSidebar"] .main {
+            height: 100vh !important;
+            display: flex !important;
+            flex-direction: column !important;
+            padding-top: 20px !important;
+        }
+        
+        /* Hide the specific close button in sidebar */
+        .stSidebar .stButton > button[kind="secondary"] {
+            display: none !important;
+        }
+        
+        /* Chat input styling - natural positioning in sidebar */
+        .stSidebar .stChatInput > div {
+            background: #374151 !important;
+            border: 1px solid #4b5563 !important;
+            border-radius: 12px !important;
+            height: 60px !important;
+        }
+        
+        .stSidebar .stChatInput input {
             background: transparent !important;
             color: white !important;
             border: none !important;
+            padding: 16px 20px !important;
+            font-size: 14px !important;
         }
         
-        .stChatInput input::placeholder {
+        .stSidebar .stChatInput input::placeholder {
             color: #9ca3af !important;
         }
         
@@ -312,24 +343,10 @@ if deck_chat_engine:
         </style>
         """, unsafe_allow_html=True)
         
-        # Assistant header with modern styling
-        st.markdown("""
-        <div style="display: flex; align-items: center; padding: 16px 0 8px 0; border-bottom: 1px solid #374151;">
-            <div style="color: #f3f4f6; font-size: 18px; font-weight: 600; display: flex; align-items: center;">
-                ✨ Assistant
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
         
-        # Add close button with modern styling
-        if st.button("✕ Close", key="close_sidebar_btn", use_container_width=True, help="Close Assistant"):
-            toggle_sidebar()
-            st.rerun()
         
-        st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
-        
-        # Chat container with modern styling
-        chat_container = st.container(height=420)
+        # Create a container that takes up all available space
+        chat_container = st.container(height=600)
         with chat_container:
             # Display chat history with improved styling
             for i, msg in enumerate(st.session_state[chat_history_key]):
@@ -338,9 +355,9 @@ if deck_chat_engine:
                 else:
                     st.chat_message("assistant", avatar="🤖").write(msg["content"])
         
-        # Chat input with modern styling
+        # Chat input at the bottom - let Streamlit handle the positioning naturally
         has_messages = len(st.session_state[chat_history_key]) > 0
-        placeholder = "Continue the conversation..." if has_messages else f"Ask about {deck_name}..."
+        placeholder = "Ask anything about this deck..." if has_messages else f"Ask about {deck_name}..."
         
         if sidebar_prompt := st.chat_input(placeholder, key="sidebar_chat_input"):
             # Add user message to history
