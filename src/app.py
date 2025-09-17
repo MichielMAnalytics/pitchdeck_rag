@@ -9,6 +9,7 @@ import tempfile
 import json
 import re
 import sys
+import streamlit.components.v1 as components
 
 from pitchdeck_splitter import pdf_to_images
 from slide_description_gen import describe_image
@@ -34,6 +35,23 @@ SHOW_LLM_EVALUATION = st.secrets.get("SHOW_LLM_EVALUATION", True)  # Default to 
 
 # --- Streamlit Config ---
 st.set_page_config(page_title="RAG Chat for VC Pitch decks", page_icon=" 💼 ", layout="wide")
+
+# --- Password Protection ---
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+if not st.session_state.authenticated:
+    st.title("🔒 Access Required")
+    password = st.text_input("Enter password:", type="password")
+    
+    if st.button("Login"):
+        if password == st.secrets["PASSWORD"]:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Incorrect password")
+    
+    st.stop()
 
 # Always hide sidebar on main page and hide navigation
 st.markdown("""
@@ -309,32 +327,19 @@ if existing_pitchdecks:
                 file_size = os.path.getsize(os.path.join(PITCHDECKS_DIR, deck))
                 st.caption(f"Size: {file_size / 1024:.1f} KB")
                 
-                # Add View, Copy URL, and Delete buttons
-                button_col1, button_col2, button_col3 = st.columns(3)
+                # Add View and Delete buttons
+                button_col1, button_col2 = st.columns(2)
                 with button_col1:
                     if st.button(f"👁️ View", key=f"view_{startup_name}", 
-                               type="primary", width="stretch",
+                               type="primary", use_container_width=True,
                                help=f"View {startup_name} slides"):
                         # Store in session state and navigate
                         st.session_state.selected_deck = startup_name
                         st.switch_page("pages/2_📊_Pitch_Deck_Viewer.py")
                 
                 with button_col2:
-                    # Copy URL button
-                    viewer_url = f"{st.get_option('server.baseUrlPath') or ''}/2_📊_Pitch_Deck_Viewer?deck={startup_name}"
-                    if st.button(f"🔗 Copy", key=f"copy_{startup_name}", 
-                               width="stretch",
-                               help=f"Copy URL to {startup_name} viewer"):
-                        # Add JavaScript to copy to clipboard
-                        st.markdown(f"""
-                        <script>
-                        navigator.clipboard.writeText(window.location.origin + '{viewer_url}');
-                        </script>
-                        """, unsafe_allow_html=True)
-                
-                with button_col3:
                     if st.button(f"🗑️ Delete", key=f"delete_{startup_name}", 
-                               width="stretch",
+                               use_container_width=True,
                                help=f"Delete {startup_name} and remove from RAG"):
                         delete_pitch_deck(startup_name, deck)
                         st.rerun()
